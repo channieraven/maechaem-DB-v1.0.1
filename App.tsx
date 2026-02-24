@@ -3,6 +3,7 @@ import { TreeRecord, CoordRecord, ViewType, GrowthFormData, PlotImage } from './
 import { SPECIES_LIST, PLOT_LIST } from './constants';
 import { apiGet, apiPost } from './services/sheetsService';
 import { utmToLatLng } from './utils/geo';
+import { getPendingActions, addPendingAction, removePendingAction, getPendingCount } from './utils/offlineQueue';
 import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext';
 import { Login } from './components/Login';
@@ -97,6 +98,10 @@ const App: React.FC = () => {
   // Map States
   const [mapPlot, setMapPlot] = useState('');
 
+  // Online / Offline State
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [pendingCount, setPendingCount] = useState(getPendingCount());
+
   // --- ACTIONS ---
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = (msg: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -161,6 +166,61 @@ const App: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // --- ONLINE / OFFLINE LISTENERS ---
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      showToast('กลับมาออนไลน์แล้ว', 'success');
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      showToast('ไม่มีอินเทอร์เน็ต — ข้อมูลจะถูกบันทึกไว้ในเครื่อง', 'info');
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // --- SYNC PENDING ACTIONS ---
+  const handleSync = async () => {
+    const pending = getPendingActions();
+    if (pending.length === 0) {
+      showToast('ไม่มีข้อมูลที่รอการซิงค์', 'info');
+      return;
+    }
+    if (!isOnline) {
+      showToast('ยังไม่มีอินเทอร์เน็ต — ไม่สามารถซิงค์ได้', 'error');
+      return;
+    }
+    setIsLoading(true);
+    let successCount = 0;
+    let errorCount = 0;
+    for (let i = 0; i < pending.length; i++) {
+      const action = pending[i];
+      setLoadingMessage(`กำลังซิงค์ข้อมูล (${i + 1}/${pending.length})...`);
+      try {
+        const res = await apiPost(action.payload);
+        if (res.success) {
+          removePendingAction(action.id);
+          successCount++;
+        } else {
+          errorCount++;
+        }
+      } catch {
+        errorCount++;
+      }
+    }
+    setPendingCount(getPendingCount());
+    const msg = `ซิงค์สำเร็จ ${successCount} รายการ${errorCount > 0 ? ` (ผิดพลาด ${errorCount} รายการ)` : ''}`;
+    showToast(msg, errorCount > 0 ? 'info' : 'success');
+    if (successCount > 0) fetchData();
+    setIsLoading(false);
+    setLoadingMessage('');
+  };
 
   const treeCodePreview = useMemo(() => {
     const { plotCode, speciesCode, treeNumber } = formData;
@@ -520,11 +580,24 @@ const App: React.FC = () => {
     if (editLogId) newRecord.log_id = editLogId;
     if (editingDataset === 'supp') newRecord.target_sheet = 'growth_logs_supp';
 
+    const payload = { action: 'addGrowthLog', ...newRecord };
+
+    // --- Offline: queue the submission and return early ---
+    if (!isOnline) {
+      addPendingAction(payload, `บันทึกข้อมูล ${newRecord.tree_code}`);
+      setPendingCount(getPendingCount());
+      showToast(`บันทึก ${newRecord.tree_code} ไว้รอซิงค์ (ออฟไลน์)`, 'info');
+      clearForm();
+      setEditingDataset('plan');
+      setShowMobileForm(false);
+      return;
+    }
+
     setIsLoading(true);
     setLoadingMessage('กำลังบันทึกข้อมูล...');
     try {
       // NOTE: Ensure Backend API can handle these extra fields or stores flexible JSON
-      const res = await apiPost({ action: 'addGrowthLog', ...newRecord });
+      const res = await apiPost(payload);
       if (res.success) {
         showToast(editLogId ? `อัปเดตข้อมูล ${newRecord.tree_code} เรียบร้อย` : `บันทึกข้อมูล ${newRecord.tree_code} เรียบร้อย`, 'success');
         clearForm();
@@ -546,24 +619,34 @@ const App: React.FC = () => {
     if (!data.treeCode) { showToast('กรุณาเลือกต้นไม้', 'error'); return; }
     if (!data.utmX || !data.utmY) { showToast('กรุณากรอกพิกัด UTM ให้ครบถ้วน', 'error'); return; }
 
+    const treeRec = records.find(r => r.tree_code === data.treeCode);
+    const { lat, lng } = utmToLatLng(Number(data.utmX), Number(data.utmY));
+    const payload = {
+      action: 'addTreeProfile',
+      tree_code: data.treeCode,
+      plot_code: treeRec?.plot_code || '',
+      species_code: treeRec?.species_code || '',
+      species_group: treeRec?.species_group || '',
+      tag_label: treeRec?.tag_label || '',
+      utm_x: data.utmX,
+      utm_y: data.utmY,
+      lat: lat,
+      lng: lng,
+      note: `Updated via App`
+    };
+
+    // --- Offline: queue the submission and return early ---
+    if (!isOnline) {
+      addPendingAction(payload, `บันทึกพิกัด ${data.treeCode}`);
+      setPendingCount(getPendingCount());
+      showToast(`บันทึกพิกัด ${data.treeCode} ไว้รอซิงค์ (ออฟไลน์)`, 'info');
+      setCoordTreeCode(''); setCoordUtmX(''); setCoordUtmY('');
+      return;
+    }
+
     setIsLoading(true);
     setLoadingMessage('กำลังบันทึกพิกัด...');
     try {
-      const treeRec = records.find(r => r.tree_code === data.treeCode);
-      const { lat, lng } = utmToLatLng(Number(data.utmX), Number(data.utmY));
-      const payload = {
-        action: 'addTreeProfile',
-        tree_code: data.treeCode,
-        plot_code: treeRec?.plot_code || '',
-        species_code: treeRec?.species_code || '',
-        species_group: treeRec?.species_group || '',
-        tag_label: treeRec?.tag_label || '',
-        utm_x: data.utmX,
-        utm_y: data.utmY,
-        lat: lat,
-        lng: lng,
-        note: `Updated via App`
-      };
       const res = await apiPost(payload);
       if (res.success) {
         showToast('บันทึกพิกัดเรียบร้อย', 'success');
@@ -914,6 +997,9 @@ const App: React.FC = () => {
         setActiveView={setActiveView} 
         user={user}
         onLogout={logout}
+        isOnline={isOnline}
+        pendingCount={pendingCount}
+        onSync={handleSync}
       />
 
       <main className="flex-1 flex overflow-hidden mb-[56px] md:mb-0">
