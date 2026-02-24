@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   TreeDeciduous, 
@@ -8,15 +8,48 @@ import {
   Users, 
   CheckCircle2, 
   ArrowRight,
-  Database
+  Database,
+  Smartphone
 } from 'lucide-react';
 
 interface HomePageProps {
   onLoginClick?: () => void;
 }
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
 const HomePage: React.FC<HomePageProps> = ({ onLoginClick }) => {
   const { login, isLoading } = useAuth();
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [showInstallButton, setShowInstallButton] = useState(false);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
+      setShowInstallButton(true);
+    };
+    const installedHandler = () => setShowInstallButton(false);
+    window.addEventListener('beforeinstallprompt', handler);
+    window.addEventListener('appinstalled', installedHandler);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handler);
+      window.removeEventListener('appinstalled', installedHandler);
+    };
+  }, []);
+
+  const handleInstall = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setShowInstallButton(false);
+    }
+    setDeferredPrompt(null);
+  };
 
   const handleLogin = () => {
     if (onLoginClick) {
@@ -40,7 +73,16 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick }) => {
               <span className="text-[10px] sm:text-xs text-gray-500 font-medium whitespace-nowrap">สำนักวิจัยและพัฒนาการป่าไม้</span>
             </div>
           </div>
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3">
+            {showInstallButton && (
+              <button
+                onClick={handleInstall}
+                className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 md:px-4 md:py-2 rounded-full text-xs md:text-sm font-medium transition-all shadow-lg shadow-green-600/20 flex items-center gap-1 md:gap-2 whitespace-nowrap"
+              >
+                <Smartphone size={14} className="w-3 h-3 md:w-4 md:h-4" />
+                ติดตั้งแอพ
+              </button>
+            )}
             <button
               onClick={handleLogin}
               disabled={isLoading}
@@ -81,6 +123,15 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick }) => {
             >
               เรียนรู้เพิ่มเติม
             </a>
+            {showInstallButton && (
+              <button
+                onClick={handleInstall}
+                className="w-full sm:w-auto px-8 py-4 bg-gray-900 hover:bg-gray-800 text-white rounded-xl font-semibold text-lg transition-all flex items-center justify-center gap-2"
+              >
+                <Smartphone size={20} />
+                ติดตั้งแอพบนโทรศัพท์
+              </button>
+            )}
           </div>
         </div>
       </section>
