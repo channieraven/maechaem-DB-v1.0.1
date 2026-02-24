@@ -128,3 +128,5 @@ You can open this URL on your phone or any device — no computer required.
 ### Required GitHub repository settings
 
 In your repository go to **Settings → Pages** and set **Source** to **"GitHub Actions"** — this is required for the deploy workflow to work.
+
+trigger deploy
