@@ -1,10 +1,12 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Download, Upload, Image as ImageIcon, Map as MapIcon, User, Calendar, Plus, X, Loader2, Maximize, ZoomIn, ZoomOut, RotateCcw, CloudLightning, Pencil, Trash2 } from 'lucide-react';
+import { Download, Upload, Image as ImageIcon, Map as MapIcon, User, Calendar, Plus, X, Loader2, Maximize, ZoomIn, ZoomOut, RotateCcw, CloudLightning, Pencil, Trash2, WifiOff, Clock } from 'lucide-react';
 import { PLOT_LIST, PLOT_PLAN_DATA } from '../constants';
 import { PlotImage, GalleryCategory } from '../types';
 import { uploadToCloudinary } from '../services/cloudinaryService';
 import { useAuth } from '../contexts/AuthContext';
+import { getPendingImageUploads, addPendingImageUpload } from '../utils/offlineImageQueue';
+import { compressImage } from '../utils/imageUtils';
 
 interface PlotInfoViewProps {
   savedImages: PlotImage[];
@@ -12,6 +14,7 @@ interface PlotInfoViewProps {
   onDeleteImage?: (id: string) => void;
   onUpdateImageDescription?: (id: string, description: string) => void;
   onNavigateToMap: (plotCode: string) => void;
+  isOnline?: boolean;
 }
 
 /** Format an upload timestamp for display (date only) and tooltip (full datetime). */
@@ -198,12 +201,19 @@ const PlanCard = ({
                 className="relative w-full h-full cursor-zoom-in"
                 onClick={() => setViewImage(image)}
             >
-               <img src={image.url} alt={title} className="w-full h-full object-contain bg-white" />
-               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-                  <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full text-white shadow-lg transform scale-90 group-hover:scale-100 transition-transform">
-                     <Maximize size={24} className="drop-shadow-md" />
-                  </div>
-               </div>
+               <img src={image.url} alt={title} className={`w-full h-full object-contain bg-white ${image.pending ? 'opacity-70' : ''}`} />
+               {image.pending && (
+                 <div className="absolute top-2 left-2 bg-yellow-400 text-yellow-900 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow">
+                   <Clock size={10} /> รอซิงค์
+                 </div>
+               )}
+               {!image.pending && (
+                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                    <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full text-white shadow-lg transform scale-90 group-hover:scale-100 transition-transform">
+                       <Maximize size={24} className="drop-shadow-md" />
+                    </div>
+                 </div>
+               )}
             </div>
           ) : (
             <div className="text-gray-400 flex flex-col items-center p-4 text-center">
@@ -237,12 +247,14 @@ const GALLERY_GROUPS: { key: GalleryCategory; label: string; emoji: string }[] =
   { key: 'other',      label: 'ภาพอื่น ๆ',   emoji: '📷' },
 ];
 
-const PlotInfoView: React.FC<PlotInfoViewProps> = ({ savedImages, onUploadImage, onDeleteImage, onUpdateImageDescription, onNavigateToMap }) => {
+const PlotInfoView: React.FC<PlotInfoViewProps> = ({ savedImages, onUploadImage, onDeleteImage, onUpdateImageDescription, onNavigateToMap, isOnline = true }) => {
   const { user } = useAuth();
   const [selectedPlot, setSelectedPlot] = useState(PLOT_LIST[0].code);
   const [activeTab, setActiveTab] = useState<'plans' | 'gallery'>('plans');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [viewImage, setViewImage] = useState<PlotImage | null>(null);
+  // Counter to trigger re-read of the offline image queue after adding/removing items
+  const [pendingQueueVersion, setPendingQueueVersion] = useState(0);
   
   // Edit description state
   const [editDescImage, setEditDescImage] = useState<PlotImage | null>(null);
@@ -271,13 +283,31 @@ const PlotInfoView: React.FC<PlotInfoViewProps> = ({ savedImages, onUploadImage,
   // Optimistic UI State
   const [localImages, setLocalImages] = useState<PlotImage[]>([]);
 
-  // Merge Saved + Local, applying optimistic delete/edit overrides
+  // Pending (offline-queued) images for the currently selected plot
+  const pendingImages = useMemo<PlotImage[]>(() => {
+    return getPendingImageUploads()
+      .filter(p => p.plotCode === selectedPlot)
+      .map(p => ({
+        id: p.id,
+        plotCode: p.plotCode,
+        type: p.type,
+        galleryCategory: p.galleryCategory,
+        url: p.base64Data,
+        description: p.description,
+        uploader: p.uploader,
+        date: p.date,
+        pending: true,
+      } as PlotImage));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPlot, pendingQueueVersion]);
+
+  // Merge Saved + Local + Pending, applying optimistic delete/edit overrides
   const allImages = useMemo(() => {
     const seen = new Set<string>();
     // Build sets from server images to deduplicate optimistic local images that are now persisted
     const serverUrlSet = new Set(savedImages.map(img => img.url).filter(Boolean));
     const serverIdSet = new Set(savedImages.map(img => img.id));
-    return [...localImages, ...savedImages]
+    return [...pendingImages, ...localImages, ...savedImages]
       .filter(img => {
         if (deletedImageIds.has(img.id)) return false;
         if (seen.has(img.id)) return false;
@@ -287,7 +317,7 @@ const PlotInfoView: React.FC<PlotInfoViewProps> = ({ savedImages, onUploadImage,
         return true;
       })
       .map(img => editedDescriptions.has(img.id) ? { ...img, description: editedDescriptions.get(img.id) ?? img.description } : img);
-  }, [savedImages, localImages, deletedImageIds, editedDescriptions]);
+  }, [savedImages, localImages, pendingImages, deletedImageIds, editedDescriptions]);
 
   const planImages = useMemo(() => {
     // Priority: Dynamic (Latest first) > Static
@@ -312,17 +342,67 @@ const PlotInfoView: React.FC<PlotInfoViewProps> = ({ savedImages, onUploadImage,
     e.preventDefault();
     if (!uploadFile || !uploadUploader) return;
 
+    let desc = '';
+    if (uploadType === 'gallery') desc = uploadDescription;
+    if (uploadType === 'plan_pre_1') desc = 'แผนผังก่อนปลูก (แผ่น 1)';
+    if (uploadType === 'plan_pre_2') desc = 'แผนผังก่อนปลูก (แผ่น 2)';
+    if (uploadType === 'plan_post_1') desc = 'แผนผังหลังปลูก';
+
+    // --- OFFLINE MODE: queue the upload for later ---
+    if (!isOnline) {
+      setIsUploading(true);
+      try {
+        const base64Data = await compressImage(uploadFile);
+        const pendingId = addPendingImageUpload({
+          plotCode: selectedPlot,
+          type: uploadType,
+          ...(uploadType === 'gallery' && { galleryCategory: uploadGalleryCategory }),
+          base64Data,
+          description: desc,
+          uploader: uploadUploader,
+          date: uploadDate,
+        });
+        // Trigger re-render of pendingImages memo
+        setPendingQueueVersion(v => v + 1);
+
+        setShowUploadModal(false);
+        setUploadFile(null);
+        setUploadUploader(user?.fullName || user?.name || '');
+        setUploadDescription('');
+
+        if (uploadType.startsWith('plan')) {
+          setActiveTab('plans');
+        } else {
+          setActiveTab('gallery');
+        }
+
+        // Notify parent so it can update the pending badge count
+        onUploadImage({
+          id: pendingId,
+          plotCode: selectedPlot,
+          type: uploadType,
+          ...(uploadType === 'gallery' && { galleryCategory: uploadGalleryCategory }),
+          url: base64Data,
+          description: desc,
+          uploader: uploadUploader,
+          date: uploadDate,
+          pending: true,
+        });
+      } catch (error: any) {
+        console.error('Offline compress error:', error);
+        alert(`ไม่สามารถบันทึกรูปภาพ: ${error.message}`);
+      } finally {
+        setIsUploading(false);
+      }
+      return;
+    }
+
+    // --- ONLINE MODE: upload to Cloudinary immediately ---
     setIsUploading(true);
 
     try {
         const imageUrl = await uploadToCloudinary(uploadFile);
         console.log("Cloudinary URL:", imageUrl);
-
-        let desc = '';
-        if (uploadType === 'gallery') desc = uploadDescription;
-        if (uploadType === 'plan_pre_1') desc = 'แผนผังก่อนปลูก (แผ่น 1)';
-        if (uploadType === 'plan_pre_2') desc = 'แผนผังก่อนปลูก (แผ่น 2)';
-        if (uploadType === 'plan_post_1') desc = 'แผนผังหลังปลูก';
 
         const newImage: PlotImage = {
           id: Date.now().toString(),
@@ -395,9 +475,10 @@ const PlotInfoView: React.FC<PlotInfoViewProps> = ({ savedImages, onUploadImage,
             </select>
             <button 
               onClick={() => setShowUploadModal(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-md transition-all"
+              className={`text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-md transition-all ${isOnline ? 'bg-blue-600 hover:bg-blue-700' : 'bg-yellow-500 hover:bg-yellow-600'}`}
             >
-               <CloudLightning size={16} /> <span className="hidden md:inline">อัปโหลด (Cloud)</span>
+               {isOnline ? <CloudLightning size={16} /> : <WifiOff size={16} />}
+               <span className="hidden md:inline">{isOnline ? 'อัปโหลด (Cloud)' : 'บันทึก (ออฟไลน์)'}</span>
             </button>
          </div>
       </div>
@@ -526,42 +607,53 @@ const PlotInfoView: React.FC<PlotInfoViewProps> = ({ savedImages, onUploadImage,
                             {group.imgs.map(img => (
                                <div 
                                   key={img.id} 
-                                  className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-all cursor-pointer"
+                                  className={`bg-white rounded-lg shadow-sm border overflow-hidden group hover:shadow-md transition-all cursor-pointer ${img.pending ? 'border-yellow-400' : 'border-gray-200'}`}
                                   onClick={() => setViewImage(img)}
                                >
                                   <div className="aspect-square bg-gray-100 relative">
-                                     <img src={img.url} alt="Gallery" className="w-full h-full object-cover" />
-                                     <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                        <button className="p-2 bg-white/20 rounded-full text-white hover:bg-white/40 backdrop-blur-sm" title="ดูภาพเต็ม">
-                                           <Maximize size={20} />
-                                        </button>
-                                        <button
-                                           className="p-2 bg-white/20 rounded-full text-white hover:bg-yellow-400/60 backdrop-blur-sm"
-                                           title="แก้ไขคำอธิบาย"
-                                           onClick={(e) => { e.stopPropagation(); setEditDescImage(img); setEditDescText(img.description || ''); }}
-                                        >
-                                           <Pencil size={18} />
-                                        </button>
-                                        <button
-                                           className="p-2 bg-white/20 rounded-full text-white hover:bg-red-500/60 backdrop-blur-sm"
-                                           title="ลบรูปภาพ"
-                                           onClick={(e) => { e.stopPropagation(); handleDeleteImage(img); }}
-                                        >
-                                           <Trash2 size={18} />
-                                        </button>
-                                     </div>
+                                     <img src={img.url} alt="Gallery" className={`w-full h-full object-cover ${img.pending ? 'opacity-70' : ''}`} />
+                                     {img.pending && (
+                                       <div className="absolute top-2 left-2 bg-yellow-400 text-yellow-900 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow">
+                                         <Clock size={10} /> รอซิงค์
+                                       </div>
+                                     )}
+                                     {!img.pending && (
+                                       <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                          <button className="p-2 bg-white/20 rounded-full text-white hover:bg-white/40 backdrop-blur-sm" title="ดูภาพเต็ม">
+                                             <Maximize size={20} />
+                                          </button>
+                                          <button
+                                             className="p-2 bg-white/20 rounded-full text-white hover:bg-yellow-400/60 backdrop-blur-sm"
+                                             title="แก้ไขคำอธิบาย"
+                                             onClick={(e) => { e.stopPropagation(); setEditDescImage(img); setEditDescText(img.description || ''); }}
+                                          >
+                                             <Pencil size={18} />
+                                          </button>
+                                          <button
+                                             className="p-2 bg-white/20 rounded-full text-white hover:bg-red-500/60 backdrop-blur-sm"
+                                             title="ลบรูปภาพ"
+                                             onClick={(e) => { e.stopPropagation(); handleDeleteImage(img); }}
+                                          >
+                                             <Trash2 size={18} />
+                                          </button>
+                                       </div>
+                                     )}
                                   </div>
                                   <div className="p-3">
                                      <p className="text-sm font-bold text-gray-800 truncate">{img.description || 'ไม่มีคำอธิบาย'}</p>
                                      <div className="flex justify-between items-center mt-2 text-[10px] text-gray-500">
                                         <span className="flex items-center gap-1"><User size={10} /> {img.uploader || '-'}</span>
-                                        <span
-                                          className="flex items-center gap-1"
-                                          title={formatUploadTooltip(img.upload_timestamp)}
-                                        >
-                                          <Calendar size={10} />
-                                          {formatUploadDate(img.upload_timestamp, img.date)}
-                                        </span>
+                                        {img.pending ? (
+                                          <span className="flex items-center gap-1 text-yellow-600"><WifiOff size={10} /> ออฟไลน์</span>
+                                        ) : (
+                                          <span
+                                            className="flex items-center gap-1"
+                                            title={formatUploadTooltip(img.upload_timestamp)}
+                                          >
+                                            <Calendar size={10} />
+                                            {formatUploadDate(img.upload_timestamp, img.date)}
+                                          </span>
+                                        )}
                                      </div>
                                   </div>
                                </div>
@@ -643,14 +735,24 @@ const PlotInfoView: React.FC<PlotInfoViewProps> = ({ savedImages, onUploadImage,
         <div className="fixed inset-0 z-[5000] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
               <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-                 <h3 className="font-bold text-gray-800">อัปโหลดรูปภาพ (Cloud)</h3>
+                 <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                   {isOnline ? <CloudLightning size={18} /> : <WifiOff size={18} className="text-yellow-600" />}
+                   {isOnline ? 'อัปโหลดรูปภาพ (Cloud)' : 'บันทึกรูปภาพ (ออฟไลน์)'}
+                 </h3>
                  <button onClick={() => setShowUploadModal(false)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
               </div>
               <form onSubmit={handleUpload} className="p-6 space-y-4">
-                 <div className="bg-blue-50 p-3 rounded-lg flex items-start gap-2 text-xs text-blue-700">
-                    <CloudLightning size={16} className="shrink-0 mt-0.5" />
-                    <p>ระบบจะอัปโหลดรูปภาพขึ้น Cloud Storage โดยอัตโนมัติ ทำให้รวดเร็วและไม่เปลืองพื้นที่ Google Drive</p>
-                 </div>
+                 {isOnline ? (
+                   <div className="bg-blue-50 p-3 rounded-lg flex items-start gap-2 text-xs text-blue-700">
+                      <CloudLightning size={16} className="shrink-0 mt-0.5" />
+                      <p>ระบบจะอัปโหลดรูปภาพขึ้น Cloud Storage โดยอัตโนมัติ ทำให้รวดเร็วและไม่เปลืองพื้นที่ Google Drive</p>
+                   </div>
+                 ) : (
+                   <div className="bg-yellow-50 p-3 rounded-lg flex items-start gap-2 text-xs text-yellow-800 border border-yellow-200">
+                      <WifiOff size={16} className="shrink-0 mt-0.5" />
+                      <p>ขณะนี้ไม่มีอินเทอร์เน็ต รูปภาพจะถูกบันทึกไว้ในเครื่องและอัปโหลดขึ้น Cloud โดยอัตโนมัติเมื่อมีสัญญาณ</p>
+                   </div>
+                 )}
 
                  <div className="space-y-1">
                     <label className="text-sm font-bold text-gray-700">ตำแหน่ง/ประเภท</label>
@@ -737,10 +839,10 @@ const PlotInfoView: React.FC<PlotInfoViewProps> = ({ savedImages, onUploadImage,
                  <button 
                    type="submit" 
                    disabled={!uploadFile || !uploadUploader || isUploading}
-                   className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-4 flex items-center justify-center gap-2"
+                   className={`w-full text-white font-bold py-3 rounded-xl shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-4 flex items-center justify-center gap-2 ${isOnline ? 'bg-green-600 hover:bg-green-700' : 'bg-yellow-500 hover:bg-yellow-600'}`}
                  >
-                    {isUploading ? <Loader2 className="animate-spin" size={20} /> : null}
-                    {isUploading ? 'กำลังอัปโหลด...' : 'ยืนยันการอัปโหลด'}
+                    {isUploading ? <Loader2 className="animate-spin" size={20} /> : (isOnline ? null : <WifiOff size={18} />)}
+                    {isUploading ? (isOnline ? 'กำลังอัปโหลด...' : 'กำลังบันทึก...') : (isOnline ? 'ยืนยันการอัปโหลด' : 'บันทึกไว้ในเครื่อง')}
                  </button>
               </form>
            </div>
