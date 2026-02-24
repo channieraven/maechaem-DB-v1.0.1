@@ -5,10 +5,10 @@ const CACHE_NAME = 'maechaem-v1';
 
 // Core assets to pre-cache on install (app shell)
 const SHELL_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icons/icon.svg',
+  './',
+  './index.html',
+  './manifest.json',
+  './icons/icon.svg',
 ];
 
 // ── Install: pre-cache the app shell ────────────────────────────────────────
@@ -68,7 +68,7 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(() =>
-          caches.match('/index.html').then((cached) => cached || new Response('ออฟไลน์', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } }))
+          caches.match('./index.html').then((cached) => cached || new Response('ออฟไลน์', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } }))
         )
     );
     return;
