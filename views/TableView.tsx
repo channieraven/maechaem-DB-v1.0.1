@@ -1,0 +1,1022 @@
+
+import React, { useMemo, useState, useRef } from 'react';
+import { Search, Loader2, Pencil, Trash2, Plus, Sprout, Leaf, Eraser, Upload, FileText, Check, X, Save, Map } from 'lucide-react';
+import { PLOT_LIST, SPECIES_LIST } from '../constants';
+import { TreeRecord, PlantCategory } from '../types';
+import { getCategoryFromRecord, getCategoryColor, getPlantCategory } from '../utils/classification';
+import Papa from 'papaparse';
+import readXlsxFile from 'read-excel-file/browser';
+
+interface TableViewProps {
+  records: TreeRecord[];
+  supplementaryRecords: TreeRecord[];
+  activeDataset: 'plan' | 'supp';
+  setActiveDataset: (d: 'plan' | 'supp') => void;
+  isLoading: boolean;
+  searchTerm: string;
+  setSearchTerm: (s: string) => void;
+  plotFilter: string;
+  setPlotFilter: (s: string) => void;
+  statusFilter: string;
+  setStatusFilter: (s: string) => void;
+  editLogId: string | null;
+  onEdit: (r: TreeRecord) => void;
+  onDelete: (r: TreeRecord) => void;
+  onOpenMobileForm: () => void;
+  onClearForm: () => void;
+  onCleanDuplicates: () => void;
+  onNavigateToMap?: (plotCode: string) => void;
+  onBulkSubmitGrowthLogs?: (data: Array<{
+    tree_code: string; plot_code: string; species_code: string; species_name: string;
+    species_group: string; tree_number: string; row_main: string; row_sub: string;
+    tag_label: string; status: string; height_m: string; dbh_cm: string;
+    bamboo_culms: string; dbh_1_cm: string; dbh_2_cm: string; dbh_3_cm: string;
+    banana_total: string; banana_1yr: string; yield_bunches: string; yield_hands: string;
+    price_per_hand: string; flowering: string; note: string; survey_date: string; recorder: string;
+  }>) => Promise<void>;
+}
+
+interface PendingGrowthRecord {
+  id: string;
+  tree_code: string;
+  plot_code: string;
+  species_code: string;
+  species_name: string;
+  tree_number: string;
+  row_main: string;
+  row_sub: string;
+  status: string;
+  height_m: string;
+  dbh_cm: string;
+  bamboo_culms: string;
+  dbh_1_cm: string;
+  dbh_2_cm: string;
+  dbh_3_cm: string;
+  banana_total: string;
+  banana_1yr: string;
+  yield_bunches: string;
+  yield_hands: string;
+  price_per_hand: string;
+  flowering: string;
+  note: string;
+  survey_date: string;
+  recorder: string;
+  verified: boolean;
+}
+
+const CATEGORIES: PlantCategory[] = ['ไม้ป่า', 'ยางพารา', 'ผลผลิตไผ่', 'ไม้ผล', 'กล้วย'];
+
+// Format ISO date string to d/M/yyyy
+const formatDate = (dateStr: string): string => {
+  if (!dateStr) return '-';
+  const parts = dateStr.split('T')[0].split('-');
+  if (parts.length !== 3) return dateStr;
+  return `${parseInt(parts[2])}/${parseInt(parts[1])}/${parts[0]}`;
+};
+
+// Extract row_main and row_sub from tag_label when fields are empty
+// tag_label format: "{tree_number} {PlotShort} {row_main} ({row_sub}) {species}"
+const extractRowFromTag = (tag: string): { row_main: string; row_sub: string } => {
+  const match = tag?.match(/^\d+\s+P\w+\s+(\d+)\s+\(([^)]+)\)/);
+  if (match) return { row_main: match[1], row_sub: match[2] };
+  return { row_main: '', row_sub: '' };
+};
+
+const TableView: React.FC<TableViewProps> = ({
+  records,
+  supplementaryRecords,
+  activeDataset,
+  setActiveDataset,
+  isLoading,
+  searchTerm,
+  setSearchTerm,
+  plotFilter,
+  setPlotFilter,
+  statusFilter,
+  setStatusFilter,
+  editLogId,
+  onEdit,
+  onDelete,
+  onOpenMobileForm,
+  onClearForm,
+  onCleanDuplicates,
+  onNavigateToMap,
+  onBulkSubmitGrowthLogs
+}) => {
+  const [activeCategory, setActiveCategory] = useState<PlantCategory>('ไม้ป่า');
+
+  // Import State
+  const [importMode, setImportMode] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [pendingData, setPendingData] = useState<PendingGrowthRecord[]>([]);
+  const [activePendingCategory, setActivePendingCategory] = useState<PlantCategory>('ไม้ป่า');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const getRowCategory = (row: PendingGrowthRecord): PlantCategory => {
+    const sg = SPECIES_LIST.find(s => s.code === row.species_code)?.group || 'A';
+    return getPlantCategory(row.species_name, sg);
+  };
+
+  // Determine which records to display based on active dataset
+  const displayRecords = activeDataset === 'supp' ? supplementaryRecords : records;
+
+  const filteredRecords = useMemo(() => {
+    const result = displayRecords.filter(r => {
+      const matchesSearch = !searchTerm || 
+        r.tree_code?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+        r.species_name?.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesPlot = !plotFilter || r.plot_code === plotFilter;
+      const matchesStatus = !statusFilter || r.status === statusFilter;
+      const category = getCategoryFromRecord(r);
+      const matchesCategory = category === activeCategory;
+      
+      return matchesSearch && matchesPlot && matchesStatus && matchesCategory;
+    });
+
+    // Sort by Plot Code then Tree Number
+    return result.sort((a, b) => {
+      // 1. Plot Code (String comparison)
+      const plotA = a.plot_code || '';
+      const plotB = b.plot_code || '';
+      if (plotA < plotB) return -1;
+      if (plotA > plotB) return 1;
+
+      // 2. Tree Number (Numeric comparison)
+      // Use existing tree_number or extract from code
+      const numA = a.tree_number || parseInt(a.tree_code.slice(-3), 10) || 0;
+      const numB = b.tree_number || parseInt(b.tree_code.slice(-3), 10) || 0;
+      return numA - numB;
+    });
+  }, [displayRecords, searchTerm, plotFilter, statusFilter, activeCategory]);
+
+  // --- IMPORT HANDLERS ---
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsAnalyzing(true);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    try {
+      // Column name aliases (English and Thai) mapped to internal field keys
+      const colMap: Record<string, string> = {
+        'tree_code': 'tree_code', 'เลขรหัสต้นไม้': 'tree_code', 'รหัสต้นไม้': 'tree_code', 'tree code': 'tree_code',
+        'plot_code': 'plot_code', 'รหัสแปลง': 'plot_code', 'แปลง': 'plot_code', 'plot code': 'plot_code',
+        'species_name': 'species_name', 'ชนิดพันธุ์': 'species_name', 'species name': 'species_name',
+        'species_code': 'species_code', 'รหัสชนิดพันธุ์': 'species_code', 'species code': 'species_code',
+        'tree_number': 'tree_number', 'ต้นที่': 'tree_number', 'tree number': 'tree_number',
+        'tag_label': 'tag_label', 'เลขแท็กต้นไม้': 'tag_label', 'แท็ก': 'tag_label',
+        'row_main': 'row_main', 'แถวหลัก': 'row_main', 'main row': 'row_main',
+        'row_sub': 'row_sub', 'แถวย่อย': 'row_sub', 'sub row': 'row_sub',
+        'status': 'status', 'สถานะ': 'status',
+        'height_m': 'height_m', 'ความสูง_ม': 'height_m', 'ความสูง': 'height_m', 'height': 'height_m',
+        'dbh_cm': 'dbh_cm', 'ความโตที่ระดับคอราก_ซม': 'dbh_cm', 'rcd': 'dbh_cm', 'dbh': 'dbh_cm', 'เส้นผ่านศูนย์กลาง': 'dbh_cm',
+        'bamboo_culms': 'bamboo_culms', 'ไผ่_จำนวนลำ': 'bamboo_culms', 'จำนวนลำ': 'bamboo_culms', 'culms': 'bamboo_culms',
+        'dbh_1_cm': 'dbh_1_cm', 'ไผ่_ความโต_ซม': 'dbh_1_cm', 'ไผ่_ความโต1_ซม': 'dbh_1_cm', 'rcd_1': 'dbh_1_cm', 'dbh1': 'dbh_1_cm', 'dbh_1': 'dbh_1_cm',
+        'dbh_2_cm': 'dbh_2_cm', 'ไผ่_ความโต2_ซม': 'dbh_2_cm', 'rcd_2': 'dbh_2_cm', 'dbh2': 'dbh_2_cm', 'dbh_2': 'dbh_2_cm',
+        'dbh_3_cm': 'dbh_3_cm', 'ไผ่_ความโต3_ซม': 'dbh_3_cm', 'rcd_3': 'dbh_3_cm', 'dbh3': 'dbh_3_cm', 'dbh_3': 'dbh_3_cm',
+        'banana_total': 'banana_total', 'กล้วย_ต้นรวม': 'banana_total', 'ต้นรวม': 'banana_total',
+        'banana_1yr': 'banana_1yr', 'กล้วย_ต้น1ปี': 'banana_1yr', 'ต้น1ปี': 'banana_1yr',
+        'yield_bunches': 'yield_bunches', 'เครือ': 'yield_bunches',
+        'yield_hands': 'yield_hands', 'หวี': 'yield_hands',
+        'price_per_hand': 'price_per_hand', 'ราคาต่อหวี': 'price_per_hand',
+        'flowering': 'flowering', 'การติดดอกออกผล': 'flowering',
+        'note': 'note', 'หมายเหตุ': 'note',
+        'survey_date': 'survey_date', 'วันที่': 'survey_date', 'date': 'survey_date',
+        'recorder': 'recorder', 'ผู้บันทึก': 'recorder',
+      };
+
+      let rows: Record<string, any>[] = [];
+      const ext = file.name.split('.').pop()?.toLowerCase();
+
+      if (ext === 'csv' || ext === 'txt') {
+        const text = await file.text();
+        const result = Papa.parse(text, { header: true, skipEmptyLines: true });
+        rows = result.data as Record<string, any>[];
+      } else if (ext === 'xlsx' || ext === 'xls') {
+        const xlRows = await readXlsxFile(file);
+        if (xlRows.length < 2) throw new Error('ไฟล์ Excel ต้องมีแถวหัวข้อและข้อมูลอย่างน้อย 1 แถว');
+        const headers = xlRows[0].map(h => String(h ?? ''));
+        rows = xlRows.slice(1).map(row =>
+          Object.fromEntries(headers.map((h, i) => [h, row[i] !== null ? String(row[i] ?? '') : '']))
+        );
+      } else {
+        throw new Error('รองรับเฉพาะไฟล์ .csv, .txt, .xlsx และ .xls เท่านั้น');
+      }
+
+      const today = new Date().toISOString().split('T')[0];
+      const newPending: PendingGrowthRecord[] = rows
+        .map((rawRow: Record<string, any>, index: number) => {
+          // Normalize keys using colMap
+          const item: Record<string, string> = {};
+          for (const [rawKey, value] of Object.entries(rawRow)) {
+            const trimmed = rawKey.trim();
+            const mapped = colMap[trimmed.toLowerCase()] ?? colMap[trimmed];
+            if (mapped) item[mapped] = String(value ?? '').trim();
+          }
+          // Try to resolve species_code from species_name if missing
+          let speciesCode = item.species_code || '';
+          if (!speciesCode && item.species_name) {
+            const found = SPECIES_LIST.find(s =>
+              s.name.toLowerCase() === item.species_name.toLowerCase() ||
+              item.species_name.toLowerCase().includes(s.name.toLowerCase())
+            );
+            if (found) speciesCode = found.code;
+          }
+          // Auto-extract plot_code, species_code, tree_number from tree_code
+          // Format: {PlotCode}{SpeciesCode}{3-digit-seq} e.g. "P05A20001" → P05, A20, 1
+          if (item.tree_code) {
+            const codeMatch = item.tree_code.match(/^(P\d{2,3})([AB]\d{2})(\d{3})$/i);
+            if (codeMatch) {
+              if (!item.plot_code) item.plot_code = codeMatch[1].toUpperCase();
+              if (!speciesCode) { speciesCode = codeMatch[2].toUpperCase(); item.species_code = speciesCode; }
+              if (!item.tree_number) item.tree_number = String(parseInt(codeMatch[3], 10));
+            }
+          }
+          // Auto-extract from tag_label
+          // Format: "{tree_number} {PlotShort} {row_main} ({row_sub}) {species}" e.g. "1 P5 01 (01) ไผ่"
+          if (item.tag_label) {
+            const tagMatch = item.tag_label.match(/^(\d+)\s+(P\w+)\s+(\d+)\s+\(([^)]+)\)\s+(.+)$/);
+            if (tagMatch) {
+              if (!item.tree_number) item.tree_number = tagMatch[1];
+              if (!item.plot_code) {
+                const foundPlot = PLOT_LIST.find(p => p.short === tagMatch[2] || p.code === tagMatch[2]);
+                item.plot_code = foundPlot?.code || tagMatch[2];
+              }
+              if (!item.row_main) item.row_main = tagMatch[3];
+              if (!item.row_sub) item.row_sub = tagMatch[4];
+              if (!item.species_name) item.species_name = tagMatch[5].trim();
+            }
+          }
+          // Normalize flowering: ✓ → yes, X/x → no (trim to handle extra whitespace)
+          const floweringVal = item.flowering?.trim().toLowerCase();
+          if (floweringVal === '✓') item.flowering = 'yes';
+          else if (floweringVal === 'x') item.flowering = 'no';
+          else if (floweringVal) item.flowering = floweringVal;
+          return {
+            id: `${Date.now()}-${index}`,
+            tree_code: item.tree_code || '',
+            plot_code: item.plot_code || '',
+            species_code: speciesCode,
+            species_name: item.species_name || (SPECIES_LIST.find(s => s.code === speciesCode)?.name || ''),
+            tree_number: item.tree_number || '',
+            row_main: item.row_main || '',
+            row_sub: item.row_sub || '',
+            status: item.status || '',
+            height_m: item.height_m || '',
+            dbh_cm: item.dbh_cm || '',
+            bamboo_culms: item.bamboo_culms || '',
+            dbh_1_cm: item.dbh_1_cm || '',
+            dbh_2_cm: item.dbh_2_cm || '',
+            dbh_3_cm: item.dbh_3_cm || '',
+            banana_total: item.banana_total || '',
+            banana_1yr: item.banana_1yr || '',
+            yield_bunches: item.yield_bunches || '',
+            yield_hands: item.yield_hands || '',
+            price_per_hand: item.price_per_hand || '',
+            flowering: item.flowering || '',
+            note: item.note || '',
+            survey_date: item.survey_date || today,
+            recorder: item.recorder || '',
+            verified: false
+          };
+        })
+        .filter(r => r.tree_code || r.tree_number);
+
+      if (newPending.length === 0) throw new Error('ไม่พบข้อมูลในไฟล์ กรุณาตรวจสอบชื่อคอลัมน์ให้ตรงกับรูปแบบที่กำหนด');
+      setPendingData(prev => [...prev, ...newPending]);
+    } catch (error) {
+      console.error('Error parsing file:', error);
+      alert('เกิดข้อผิดพลาดในการอ่านไฟล์: ' + (error as any).message);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleVerifyPending = (id: string) => setPendingData(prev => prev.map(p => p.id === id ? { ...p, verified: true } : p));
+  const handleUnverifyPending = (id: string) => setPendingData(prev => prev.map(p => p.id === id ? { ...p, verified: false } : p));
+  const handleDeletePending = (id: string) => setPendingData(prev => prev.filter(p => p.id !== id));
+  const handleUpdatePending = (id: string, field: keyof PendingGrowthRecord, value: string) =>
+    setPendingData(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
+
+  const handleSaveVerified = async () => {
+    const verified = pendingData.filter(p => p.verified);
+    if (verified.length === 0 || !onBulkSubmitGrowthLogs) return;
+
+    const payload = verified.map(v => {
+
+      // Resolve per-record species info
+      const speciesCode = v.species_code;
+      const foundSpecies = SPECIES_LIST.find(s => s.code === speciesCode);
+      const speciesName = v.species_name || foundSpecies?.name || '';
+      const speciesGroup = foundSpecies?.group || 'A';
+
+      // Build tree_code if not present
+      let treeCode = v.tree_code;
+      if (!treeCode && v.plot_code && speciesCode && v.tree_number) {
+        treeCode = `${v.plot_code}${speciesCode}${v.tree_number.padStart(3, '0')}`;
+      }
+
+      // Build tag_label
+      const plot = PLOT_LIST.find(p => p.code === v.plot_code);
+      const plotShort = plot?.short || v.plot_code;
+      const mainPad = v.row_main.toString().padStart(2, '0');
+      const tagLabel = v.tree_number
+        ? `${v.tree_number} ${plotShort} ${mainPad} (${v.row_sub}) ${speciesName}`
+        : treeCode;
+
+      return {
+        tree_code: treeCode,
+        plot_code: v.plot_code,
+        species_code: speciesCode,
+        species_name: speciesName,
+        species_group: speciesGroup,
+        tree_number: v.tree_number,
+        row_main: v.row_main,
+        row_sub: v.row_sub,
+        tag_label: tagLabel,
+        status: v.status,
+        height_m: v.height_m,
+        dbh_cm: v.dbh_cm,
+        bamboo_culms: v.bamboo_culms,
+        dbh_1_cm: v.dbh_1_cm,
+        dbh_2_cm: v.dbh_2_cm,
+        dbh_3_cm: v.dbh_3_cm,
+        banana_total: v.banana_total,
+        banana_1yr: v.banana_1yr,
+        yield_bunches: v.yield_bunches,
+        yield_hands: v.yield_hands,
+        price_per_hand: v.price_per_hand,
+        flowering: v.flowering,
+        note: v.note,
+        survey_date: v.survey_date,
+        recorder: v.recorder
+      };
+    });
+
+    await onBulkSubmitGrowthLogs(payload);
+    setPendingData(prev => prev.filter(p => !p.verified));
+    setImportMode(false);
+  };
+
+  // --- IMPORT MODE RENDER ---
+
+  if (importMode) {
+    const catCounts = CATEGORIES.reduce((acc, cat) => {
+      acc[cat] = pendingData.filter(r => getRowCategory(r) === cat).length;
+      return acc;
+    }, {} as Record<PlantCategory, number>);
+    const visibleRows = pendingData.filter(r => getRowCategory(r) === activePendingCategory);
+
+    // Shared leading cells (tree code → status)
+    const renderLeadingCells = (row: PendingGrowthRecord) => (
+      <>
+        <td className="px-3 py-2">
+          <input value={row.tree_code} onChange={e => handleUpdatePending(row.id, 'tree_code', e.target.value)}
+            className="w-28 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs" />
+        </td>
+        <td className="px-3 py-2">
+          <select value={row.plot_code} onChange={e => handleUpdatePending(row.id, 'plot_code', e.target.value)}
+            className="bg-transparent border-b border-transparent focus:border-blue-400 outline-none text-xs w-20">
+            <option value="">—</option>
+            {PLOT_LIST.map(p => <option key={p.code} value={p.code}>{p.code}</option>)}
+          </select>
+        </td>
+        <td className="px-3 py-2">
+          <select value={row.species_code} onChange={e => {
+              const s = SPECIES_LIST.find(x => x.code === e.target.value);
+              handleUpdatePending(row.id, 'species_code', e.target.value);
+              if (s) handleUpdatePending(row.id, 'species_name', s.name);
+            }}
+            className="bg-transparent border-b border-transparent focus:border-blue-400 outline-none text-xs w-28">
+            <option value="">— เลือก —</option>
+            {SPECIES_LIST.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
+          </select>
+        </td>
+        <td className="px-3 py-2">
+          <input value={row.tree_number} onChange={e => handleUpdatePending(row.id, 'tree_number', e.target.value)}
+            className="w-12 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-center" />
+        </td>
+        <td className="px-3 py-2">
+          <div className="flex gap-1">
+            <input value={row.row_main} onChange={e => handleUpdatePending(row.id, 'row_main', e.target.value)}
+              placeholder="หลัก" className="w-10 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-center" />
+            <span className="text-gray-400">/</span>
+            <input value={row.row_sub} onChange={e => handleUpdatePending(row.id, 'row_sub', e.target.value)}
+              placeholder="ย่อย" className="w-10 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-center" />
+          </div>
+        </td>
+        <td className="px-3 py-2">
+          <select value={row.status} onChange={e => handleUpdatePending(row.id, 'status', e.target.value)}
+            className="bg-transparent border-b border-transparent focus:border-blue-400 outline-none text-xs">
+            <option value="">—</option>
+            <option value="alive">รอด</option>
+            <option value="dead">ตาย</option>
+          </select>
+        </td>
+      </>
+    );
+
+    // Shared trailing cells (date → actions)
+    const renderTrailingCells = (row: PendingGrowthRecord) => (
+      <>
+        <td className="px-3 py-2">
+          <input type="date" value={row.survey_date} onChange={e => handleUpdatePending(row.id, 'survey_date', e.target.value)}
+            className="bg-transparent border-b border-transparent focus:border-blue-400 outline-none text-xs w-28" />
+        </td>
+        <td className="px-3 py-2">
+          <input value={row.recorder} onChange={e => handleUpdatePending(row.id, 'recorder', e.target.value)}
+            className="w-20 bg-transparent border-b border-transparent focus:border-blue-400 outline-none text-xs" />
+        </td>
+        <td className="px-3 py-2 text-center">
+          {row.verified ? (
+            <span className="inline-flex items-center gap-1 text-green-600 text-xs font-bold bg-green-100 px-2 py-1 rounded-full whitespace-nowrap">
+              <Check size={11} /> ยืนยัน
+            </span>
+          ) : (
+            <span className="inline-flex items-center text-yellow-600 text-xs font-bold bg-yellow-100 px-2 py-1 rounded-full whitespace-nowrap">
+              รอ
+            </span>
+          )}
+        </td>
+        <td className="px-3 py-2 text-right">
+          <div className="flex justify-end gap-1">
+            {row.verified ? (
+              <button onClick={() => handleUnverifyPending(row.id)} className="p-1 text-yellow-500 hover:bg-yellow-100 rounded" title="ยกเลิกการยืนยัน"><X size={15} /></button>
+            ) : (
+              <button onClick={() => handleVerifyPending(row.id)} className="p-1 text-green-600 hover:bg-green-100 rounded" title="ยืนยัน"><Check size={15} /></button>
+            )}
+            <button onClick={() => handleDeletePending(row.id)} className="p-1 text-red-400 hover:bg-red-50 rounded" title="ลบ"><Trash2 size={15} /></button>
+          </div>
+        </td>
+      </>
+    );
+
+    return (
+      <div className="flex flex-col h-full bg-gray-50">
+        {/* Header */}
+        <div className="p-4 bg-green-50 border-b border-green-200 shrink-0">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3 text-green-800">
+              <FileText size={22} />
+              <h2 className="text-lg font-bold">นำเข้าข้อมูลต้นไม้จากไฟล์ (CSV/TXT/Excel)</h2>
+            </div>
+            <button onClick={() => setImportMode(false)} className="text-green-700 hover:text-green-900 font-bold text-sm">
+              กลับไปหน้าตาราง
+            </button>
+          </div>
+          <div className="flex gap-4 items-center">
+            <input type="file" ref={fileInputRef} className="hidden" accept=".csv,.txt,.xlsx,.xls" onChange={handleFileUpload} />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isAnalyzing}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold shadow-sm hover:bg-green-700 flex items-center gap-2 disabled:opacity-50"
+            >
+              {isAnalyzing ? <Loader2 className="animate-spin" size={18} /> : <Upload size={18} />}
+              {isAnalyzing ? 'กำลังอ่านไฟล์...' : 'อัพโหลดไฟล์'}
+            </button>
+            <span className="text-sm text-gray-500">รองรับไฟล์ CSV, TXT และ Excel (.xlsx, .xls)</span>
+          </div>
+        </div>
+
+        {/* Category Tabs */}
+        {pendingData.length > 0 && (
+          <div className="px-4 pt-2 bg-white border-b border-gray-200 overflow-x-auto shrink-0">
+            <div className="flex space-x-1 min-w-max">
+              {CATEGORIES.map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setActivePendingCategory(cat)}
+                  className={`px-4 py-2 text-sm font-bold rounded-t-lg transition-all flex items-center gap-2 ${
+                    activePendingCategory === cat
+                      ? 'bg-green-700 text-white shadow-sm'
+                      : 'text-gray-500 hover:text-green-700 hover:bg-gray-100'
+                  }`}
+                >
+                  {cat}
+                  {catCounts[cat] > 0 && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                      activePendingCategory === cat ? 'bg-white/30 text-white' : 'bg-gray-200 text-gray-600'
+                    }`}>{catCounts[cat]}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Table Area */}
+        <div className="flex-1 min-h-0 p-4 flex flex-col">
+          {pendingData.length > 0 ? (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-1 min-h-0 flex flex-col">
+              <div className="px-4 py-3 border-b border-gray-200 flex justify-between items-center bg-gray-50 shrink-0">
+                <h3 className="font-bold text-gray-700 text-sm">
+                  {activePendingCategory} — {visibleRows.length} รายการ
+                  {visibleRows.filter(r => r.verified).length > 0 && (
+                    <span className="ml-2 text-green-600">({visibleRows.filter(r => r.verified).length} ยืนยันแล้ว)</span>
+                  )}
+                </h3>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setPendingData(prev => prev.map(p => getRowCategory(p) === activePendingCategory ? { ...p, verified: true } : p))}
+                    className="text-xs text-green-600 font-bold hover:underline"
+                  >ยืนยันทั้งหมดในหมวดนี้</button>
+                  <button onClick={() => setPendingData([])} className="text-xs text-red-600 font-bold hover:underline">ล้างทั้งหมด</button>
+                </div>
+              </div>
+
+              <div className="overflow-auto flex-1">
+                {/* Standard trees: ไม้ป่า / ยางพารา / ไม้ผล */}
+                {(activePendingCategory === 'ไม้ป่า' || activePendingCategory === 'ยางพารา' || activePendingCategory === 'ไม้ผล') && (
+                  <table className="w-full text-left text-sm" aria-label={`ตารางตรวจสอบข้อมูล ${activePendingCategory}`}>
+                    <thead className="bg-gray-100 text-gray-600 text-xs uppercase font-bold sticky top-0">
+                      <tr>
+                        <th className="px-3 py-3 whitespace-nowrap">Tree Code</th>
+                        <th className="px-3 py-3 whitespace-nowrap">แปลง</th>
+                        <th className="px-3 py-3 whitespace-nowrap">ชนิดพันธุ์</th>
+                        <th className="px-3 py-3 whitespace-nowrap">ต้นที่</th>
+                        <th className="px-3 py-3 whitespace-nowrap">แถว (หลัก/ย่อย)</th>
+                        <th className="px-3 py-3 whitespace-nowrap">สถานะ</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">RCD (ซม.)</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">สูง (ม.)</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-center">ดอก/ผล</th>
+                        <th className="px-3 py-3 whitespace-nowrap">หมายเหตุ</th>
+                        <th className="px-3 py-3 whitespace-nowrap">วันที่</th>
+                        <th className="px-3 py-3 whitespace-nowrap">ผู้บันทึก</th>
+                        <th className="px-3 py-3 text-center whitespace-nowrap">ยืนยัน</th>
+                        <th className="px-3 py-3 text-right whitespace-nowrap">จัดการ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {visibleRows.map(row => (
+                        <tr key={row.id} className={row.verified ? 'bg-green-50' : 'hover:bg-gray-50'}>
+                          {renderLeadingCells(row)}
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.dbh_cm} onChange={e => handleUpdatePending(row.id, 'dbh_cm', e.target.value)}
+                              className="w-16 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.height_m} onChange={e => handleUpdatePending(row.id, 'height_m', e.target.value)}
+                              className="w-16 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <select value={row.flowering} onChange={e => handleUpdatePending(row.id, 'flowering', e.target.value)}
+                              className="bg-transparent border-b border-transparent focus:border-blue-400 outline-none text-xs">
+                              <option value="">—</option>
+                              <option value="yes">🌸 ใช่</option>
+                              <option value="no">ไม่</option>
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input value={row.note} onChange={e => handleUpdatePending(row.id, 'note', e.target.value)}
+                              className="w-32 bg-transparent border-b border-transparent focus:border-blue-400 outline-none text-xs" />
+                          </td>
+                          {renderTrailingCells(row)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* Bamboo: ผลผลิตไผ่ */}
+                {activePendingCategory === 'ผลผลิตไผ่' && (
+                  <table className="w-full text-left text-sm" aria-label="ตารางตรวจสอบข้อมูลผลผลิตไผ่">
+                    <thead className="bg-yellow-50 text-gray-600 text-xs uppercase font-bold sticky top-0">
+                      <tr>
+                        <th className="px-3 py-3 whitespace-nowrap">Tree Code</th>
+                        <th className="px-3 py-3 whitespace-nowrap">แปลง</th>
+                        <th className="px-3 py-3 whitespace-nowrap">ชนิดพันธุ์</th>
+                        <th className="px-3 py-3 whitespace-nowrap">ต้นที่</th>
+                        <th className="px-3 py-3 whitespace-nowrap">แถว (หลัก/ย่อย)</th>
+                        <th className="px-3 py-3 whitespace-nowrap">สถานะ</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">จำนวนลำ</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">RCD ลำ 1 (ซม.)</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">RCD ลำ 2 (ซม.)</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">RCD ลำ 3 (ซม.)</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">สูง (ม.)</th>
+                        <th className="px-3 py-3 whitespace-nowrap">หมายเหตุ</th>
+                        <th className="px-3 py-3 whitespace-nowrap">วันที่</th>
+                        <th className="px-3 py-3 whitespace-nowrap">ผู้บันทึก</th>
+                        <th className="px-3 py-3 text-center whitespace-nowrap">ยืนยัน</th>
+                        <th className="px-3 py-3 text-right whitespace-nowrap">จัดการ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {visibleRows.map(row => (
+                        <tr key={row.id} className={row.verified ? 'bg-green-50' : 'hover:bg-gray-50'}>
+                          {renderLeadingCells(row)}
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.bamboo_culms} onChange={e => handleUpdatePending(row.id, 'bamboo_culms', e.target.value)}
+                              className="w-14 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.dbh_1_cm} onChange={e => handleUpdatePending(row.id, 'dbh_1_cm', e.target.value)}
+                              className="w-16 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.dbh_2_cm} onChange={e => handleUpdatePending(row.id, 'dbh_2_cm', e.target.value)}
+                              className="w-16 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.dbh_3_cm} onChange={e => handleUpdatePending(row.id, 'dbh_3_cm', e.target.value)}
+                              className="w-16 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.height_m} onChange={e => handleUpdatePending(row.id, 'height_m', e.target.value)}
+                              className="w-16 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input value={row.note} onChange={e => handleUpdatePending(row.id, 'note', e.target.value)}
+                              className="w-32 bg-transparent border-b border-transparent focus:border-blue-400 outline-none text-xs" />
+                          </td>
+                          {renderTrailingCells(row)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* Banana: กล้วย */}
+                {activePendingCategory === 'กล้วย' && (
+                  <table className="w-full text-left text-sm" aria-label="ตารางตรวจสอบข้อมูลกล้วย">
+                    <thead className="bg-lime-50 text-gray-600 text-xs uppercase font-bold sticky top-0">
+                      <tr>
+                        <th className="px-3 py-3 whitespace-nowrap">Tree Code</th>
+                        <th className="px-3 py-3 whitespace-nowrap">แปลง</th>
+                        <th className="px-3 py-3 whitespace-nowrap">ชนิดพันธุ์</th>
+                        <th className="px-3 py-3 whitespace-nowrap">ต้นที่</th>
+                        <th className="px-3 py-3 whitespace-nowrap">แถว (หลัก/ย่อย)</th>
+                        <th className="px-3 py-3 whitespace-nowrap">สถานะ</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">ต้นรวม</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">ต้น 1 ปี</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">สูง (ม.)</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">เครือ</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">หวี</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-right">ราคา/หวี</th>
+                        <th className="px-3 py-3 whitespace-nowrap text-center">ดอก/ผล</th>
+                        <th className="px-3 py-3 whitespace-nowrap">หมายเหตุ</th>
+                        <th className="px-3 py-3 whitespace-nowrap">วันที่</th>
+                        <th className="px-3 py-3 whitespace-nowrap">ผู้บันทึก</th>
+                        <th className="px-3 py-3 text-center whitespace-nowrap">ยืนยัน</th>
+                        <th className="px-3 py-3 text-right whitespace-nowrap">จัดการ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {visibleRows.map(row => (
+                        <tr key={row.id} className={row.verified ? 'bg-green-50' : 'hover:bg-gray-50'}>
+                          {renderLeadingCells(row)}
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.banana_total} onChange={e => handleUpdatePending(row.id, 'banana_total', e.target.value)}
+                              className="w-14 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.banana_1yr} onChange={e => handleUpdatePending(row.id, 'banana_1yr', e.target.value)}
+                              className="w-14 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.height_m} onChange={e => handleUpdatePending(row.id, 'height_m', e.target.value)}
+                              className="w-16 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.yield_bunches} onChange={e => handleUpdatePending(row.id, 'yield_bunches', e.target.value)}
+                              className="w-14 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.yield_hands} onChange={e => handleUpdatePending(row.id, 'yield_hands', e.target.value)}
+                              className="w-14 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input value={row.price_per_hand} onChange={e => handleUpdatePending(row.id, 'price_per_hand', e.target.value)}
+                              className="w-16 bg-transparent border-b border-transparent focus:border-blue-400 outline-none font-mono text-xs text-right" />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <select value={row.flowering} onChange={e => handleUpdatePending(row.id, 'flowering', e.target.value)}
+                              className="bg-transparent border-b border-transparent focus:border-blue-400 outline-none text-xs">
+                              <option value="">—</option>
+                              <option value="yes">🌸 ใช่</option>
+                              <option value="no">ไม่</option>
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input value={row.note} onChange={e => handleUpdatePending(row.id, 'note', e.target.value)}
+                              className="w-32 bg-transparent border-b border-transparent focus:border-blue-400 outline-none text-xs" />
+                          </td>
+                          {renderTrailingCells(row)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {visibleRows.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+                    <p className="text-sm">ไม่มีข้อมูลประเภท <strong>{activePendingCategory}</strong> ในไฟล์ที่อัพโหลด</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-64 text-gray-400 border-2 border-dashed border-gray-300 rounded-xl">
+              <Upload size={48} className="mb-4 opacity-50" />
+              <p>อัพโหลดไฟล์เพื่อเริ่มนำเข้าข้อมูลต้นไม้</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 bg-white border-t border-gray-200 flex justify-end gap-3 items-center shrink-0">
+          <span className="text-sm text-gray-500 mr-auto">
+            ยืนยันแล้ว: <span className="font-bold text-green-600">{pendingData.filter(p => p.verified).length}</span> / {pendingData.length}
+          </span>
+          <button onClick={() => setImportMode(false)} className="px-4 py-2 text-gray-600 font-bold hover:bg-gray-100 rounded-lg">ยกเลิก</button>
+          <button
+            onClick={handleSaveVerified}
+            disabled={pendingData.filter(p => p.verified).length === 0 || isLoading}
+            className="px-6 py-2 bg-green-600 text-white font-bold rounded-lg shadow-sm hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+          >
+            {isLoading ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
+            บันทึกข้อมูลที่เลือก
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full relative">
+      {/* Search and Global Filter Bar */}
+      <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row items-stretch md:items-center gap-4 bg-white sticky top-0 z-20">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+          <input 
+            type="text" 
+            placeholder="ค้นหา code, ชนิด, แปลง..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-gray-100 border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-green-500/20 outline-none"
+          />
+        </div>
+        <div className="flex gap-2">
+          <select 
+            value={plotFilter}
+            onChange={(e) => setPlotFilter(e.target.value)}
+            className="bg-gray-100 border-none rounded-lg px-3 py-2 text-sm flex-1 md:flex-none"
+          >
+            <option value="">ทุกแปลง</option>
+            {PLOT_LIST.map(p => <option key={p.code} value={p.code}>{p.code}</option>)}
+          </select>
+          {plotFilter && onNavigateToMap && (
+            <button
+              onClick={() => onNavigateToMap(plotFilter)}
+              className="flex items-center gap-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 font-semibold rounded-lg px-3 py-2 text-sm transition-colors whitespace-nowrap"
+              title="ดูแปลงนี้บนแผนที่ดาวเทียม"
+            >
+              <Map size={15} />
+              ดูในแผนที่
+            </button>
+          )}
+          <select 
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="bg-gray-100 border-none rounded-lg px-3 py-2 text-sm flex-1 md:flex-none"
+          >
+            <option value="">ทุกสถานะ</option>
+            <option value="alive">รอด</option>
+            <option value="dead">ตาย</option>
+          </select>
+          <button
+            onClick={onCleanDuplicates}
+            className="flex items-center gap-1.5 bg-orange-100 hover:bg-orange-200 text-orange-700 font-semibold rounded-lg px-3 py-2 text-sm transition-colors whitespace-nowrap"
+            title="ล้างข้อมูลซ้ำ"
+          >
+            <Eraser size={15} />
+            ล้างข้อมูลซ้ำ
+          </button>
+          {onBulkSubmitGrowthLogs && (
+            <button
+              onClick={() => setImportMode(true)}
+              className="flex items-center gap-1.5 bg-green-100 hover:bg-green-200 text-green-700 font-semibold rounded-lg px-3 py-2 text-sm transition-colors whitespace-nowrap"
+              title="นำเข้าข้อมูลจากไฟล์ PDF หรือรูปภาพ"
+            >
+              <Upload size={15} />
+              นำเข้าจากไฟล์
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Dataset Tabs */}
+      <div className="px-4 pt-2 bg-white border-b border-gray-200 overflow-x-auto no-scrollbar">
+        <div className="flex space-x-1 min-w-max">
+          <button
+            onClick={() => setActiveDataset('plan')}
+            className={`px-5 py-2.5 text-sm font-bold rounded-t-lg transition-all ${
+              activeDataset === 'plan'
+                ? 'bg-green-700 text-white shadow-sm'
+                : 'text-gray-500 hover:text-green-700 hover:bg-gray-100'
+            }`}
+          >
+            ตารางข้อมูลต้นไม้ตามผัง
+          </button>
+          <button
+            onClick={() => setActiveDataset('supp')}
+            className={`px-5 py-2.5 text-sm font-bold rounded-t-lg transition-all ${
+              activeDataset === 'supp'
+                ? 'bg-green-700 text-white shadow-sm'
+                : 'text-gray-500 hover:text-green-700 hover:bg-gray-100'
+            }`}
+          >
+            ตารางข้อมูลต้นไม้ปลูกเสริม
+          </button>
+        </div>
+      </div>
+
+      {/* Category Tabs */}
+      <div className="px-4 pt-2 bg-gray-50 border-b border-gray-200 overflow-x-auto no-scrollbar">
+        <div className="flex space-x-1 min-w-max">
+           {CATEGORIES.map(cat => (
+             <button
+               key={cat}
+               onClick={() => setActiveCategory(cat)}
+               className={`px-4 py-2.5 text-sm font-bold rounded-t-lg transition-all flex items-center gap-2 ${
+                 activeCategory === cat 
+                   ? 'bg-white text-green-700 border-t-2 border-green-600 shadow-sm' 
+                   : 'text-gray-500 hover:text-green-600 hover:bg-gray-100'
+               }`}
+             >
+                {cat === 'ไม้ป่า' && <Sprout size={16} />}
+                {cat === 'ยางพารา' && <Leaf size={16} />}
+                {cat}
+             </button>
+           ))}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto bg-white">
+        <table className="w-full text-left border-collapse">
+          <thead className="bg-gray-800 text-white text-[11px] font-bold uppercase tracking-wider sticky top-0 z-10">
+            <tr>
+              <th className="px-4 py-3 whitespace-nowrap">วันที่ / ผู้บันทึก</th>
+              <th className="px-4 py-3 whitespace-nowrap text-center">รหัสแปลง</th>
+              <th className="px-4 py-3 whitespace-nowrap text-center">ต้นที่</th>
+              <th className="px-4 py-3 whitespace-nowrap">Code / Tag</th>
+              <th className="px-4 py-3 whitespace-nowrap">ชนิด</th>
+              <th className="px-4 py-3 whitespace-nowrap text-center">หลัก</th>
+              <th className="px-4 py-3 whitespace-nowrap text-center">แถว</th>
+              <th className="px-4 py-3 whitespace-nowrap">สถานะ</th>
+              
+              {/* Dynamic Columns based on Category */}
+              {(activeCategory === 'ไม้ป่า' || activeCategory === 'ยางพารา' || activeCategory === 'ไม้ผล') && (
+                <>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">RCD (ซม.)</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">สูง (ม.)</th>
+                </>
+              )}
+
+              {activeCategory === 'ผลผลิตไผ่' && (
+                <>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">จำนวน (ลำ)</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">RCD 1 (ซม.)</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">RCD 2 (ซม.)</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">RCD 3 (ซม.)</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">สูง (ม.)</th>
+                </>
+              )}
+
+              {activeCategory === 'กล้วย' && (
+                <>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">ต้นรวม</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">ต้น 1 ปี</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">สูง (ม.)</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">เครือ</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">หวี</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">ราคา/หวี</th>
+                </>
+              )}
+
+              <th className="px-4 py-3 text-center whitespace-nowrap">ดอก/ผล</th>
+              <th className="px-4 py-3 whitespace-nowrap">หมายเหตุ</th>
+              <th className="px-4 py-3 text-center bg-gray-900 whitespace-nowrap">จัดการ</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {filteredRecords.length > 0 ? (
+              filteredRecords.map((r, i) => {
+                return (
+                  <tr key={r.log_id || i} className={`hover:bg-green-50/50 transition-colors group ${editLogId === r.log_id ? 'bg-amber-50' : ''}`}>
+                    <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                       <div>{formatDate(r.survey_date)}</div>
+                       <div className="text-[10px] text-gray-400">{r.recorder}</div>
+                    </td>
+                    <td className="px-4 py-3 text-center font-mono text-sm font-bold text-green-700">
+                       {r.plot_code}
+                    </td>
+                    <td className="px-4 py-3 text-center font-mono text-sm font-bold">
+                       {/* Extract last 3 digits from tree_code if tree_number is missing or 0 */}
+                       {r.tree_number || parseInt(r.tree_code.slice(-3), 10)}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                       <div className="font-mono text-sm font-bold text-green-800">{r.tree_code}</div>
+                       <div className="text-[10px] text-gray-500 font-mono">{r.tag_label}</div>
+                    </td>
+                    <td className="px-4 py-3 text-xs whitespace-nowrap">
+                      <span className={`inline-block w-2 h-2 rounded-full mr-2 ${r.species_group === 'A' ? 'bg-green-600' : 'bg-orange-600'}`}></span>
+                      {r.species_name}
+                    </td>
+                    <td className="px-4 py-3 text-center font-mono text-sm">{r.row_main || extractRowFromTag(r.tag_label).row_main || '-'}</td>
+                    <td className="px-4 py-3 text-center font-mono text-sm">{r.row_sub || extractRowFromTag(r.tag_label).row_sub || '-'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase whitespace-nowrap ${
+                        r.status === 'alive' ? 'bg-green-100 text-green-700' : 
+                        r.status === 'dead' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {r.status === 'alive' ? 'รอด' : r.status === 'dead' ? 'ตาย' : '—'}
+                      </span>
+                    </td>
+
+                    {/* Dynamic Row Data */}
+                    {(activeCategory === 'ไม้ป่า' || activeCategory === 'ยางพารา' || activeCategory === 'ไม้ผล') && (
+                      <>
+                        <td className="px-4 py-3 text-right font-mono text-sm">{r.dbh_cm || '-'}</td>
+                        <td className="px-4 py-3 text-right font-mono text-sm">{r.height_m || '-'}</td>
+                      </>
+                    )}
+
+                    {activeCategory === 'ผลผลิตไผ่' && (
+                      <>
+                        <td className="px-4 py-3 text-right font-mono text-sm font-bold">{r.bamboo_culms || '-'}</td>
+                        <td className="px-4 py-3 text-right font-mono text-xs text-gray-600">{r.dbh_1_cm || '-'}</td>
+                        <td className="px-4 py-3 text-right font-mono text-xs text-gray-600">{r.dbh_2_cm || '-'}</td>
+                        <td className="px-4 py-3 text-right font-mono text-xs text-gray-600">{r.dbh_3_cm || '-'}</td>
+                        <td className="px-4 py-3 text-right font-mono text-sm">{r.height_m || '-'}</td>
+                      </>
+                    )}
+
+                    {activeCategory === 'กล้วย' && (
+                      <>
+                        <td className="px-4 py-3 text-right font-mono text-sm">{r.banana_total || '-'}</td>
+                        <td className="px-4 py-3 text-right font-mono text-sm">{r.banana_1yr || '-'}</td>
+                        <td className="px-4 py-3 text-right font-mono text-sm">{r.height_m || '-'}</td>
+                        <td className="px-4 py-3 text-right font-mono text-sm">{r.yield_bunches || '-'}</td>
+                        <td className="px-4 py-3 text-right font-mono text-sm">{r.yield_hands || '-'}</td>
+                        <td className="px-4 py-3 text-right font-mono text-sm text-green-700 font-bold">{r.price_per_hand || '-'}</td>
+                      </>
+                    )}
+                    
+                    <td className="px-4 py-3 text-center">
+                       {r.flowering === 'yes' ? '🌸' : <span className="text-gray-200">•</span>}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-500 truncate max-w-[150px]" title={r.note}>{r.note}</td>
+                    
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button 
+                          onClick={() => onEdit(r)}
+                          className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-all"
+                          title="แก้ไข"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button 
+                          onClick={() => onDelete(r)}
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-all"
+                          title="ลบข้อมูล"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td colSpan={15} className="py-20 text-center">
+                  <div className="flex flex-col items-center gap-3 text-gray-400">
+                    {isLoading ? (
+                       <Loader2 size={48} className="animate-spin text-green-600" />
+                    ) : (
+                       <>
+                          <Search size={48} strokeWidth={1} />
+                          <p>ไม่พบข้อมูลในกลุ่ม {activeCategory}</p>
+                       </>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mobile FAB to Add Tree */}
+      <button 
+        onClick={() => { onClearForm(); onOpenMobileForm(); }}
+        className="md:hidden absolute bottom-6 right-6 w-14 h-14 bg-[#2d5a27] text-white rounded-full shadow-lg flex items-center justify-center z-30 hover:bg-green-800 transition-colors"
+      >
+        <Plus size={28} />
+      </button>
+    </div>
+  );
+};
+
+export default TableView;
