@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Trees, Loader2, RotateCcw, ClipboardList, MapPin, Map as MapIcon, BarChart3, History, FileImage, LogOut, User } from 'lucide-react';
+import { Trees, Loader2, RotateCcw, ClipboardList, MapPin, Map as MapIcon, BarChart3, History, FileImage, LogOut, User, WifiOff, RefreshCw } from 'lucide-react';
 import { ViewType } from '../types';
 
 interface HeaderProps {
@@ -11,6 +11,9 @@ interface HeaderProps {
   setActiveView: (view: ViewType) => void;
   user?: { name: string; fullName?: string; picture?: string; email: string } | null;
   onLogout?: () => void;
+  isOnline?: boolean;
+  pendingCount?: number;
+  onSync?: () => void;
 }
 
 const TabButton: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string }> = ({ active, onClick, icon, label }) => (
@@ -27,9 +30,16 @@ const TabButton: React.FC<{ active: boolean; onClick: () => void; icon: React.Re
   </button>
 );
 
-const Header: React.FC<HeaderProps> = ({ stats, isLoading, onRefresh, activeView, setActiveView, user, onLogout }) => {
+const Header: React.FC<HeaderProps> = ({ stats, isLoading, onRefresh, activeView, setActiveView, user, onLogout, isOnline = true, pendingCount = 0, onSync }) => {
   return (
     <header className="bg-[#2d5a27] text-white shadow-lg z-50 relative shrink-0 w-full">
+      {/* Offline Banner */}
+      {!isOnline && (
+        <div className="w-full bg-yellow-500 text-yellow-900 text-xs font-semibold flex items-center justify-center gap-2 py-1 px-4">
+          <WifiOff size={13} />
+          <span>ออฟไลน์ — ข้อมูลจะถูกบันทึกไว้ในเครื่องจนกว่าจะมีสัญญาณ</span>
+        </div>
+      )}
       <div className="w-full px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="bg-white/20 p-2 rounded-lg">
@@ -104,6 +114,21 @@ const Header: React.FC<HeaderProps> = ({ stats, isLoading, onRefresh, activeView
           >
             {isLoading ? <Loader2 size={20} className="animate-spin" /> : <RotateCcw size={20} />}
           </button>
+
+          {/* Sync Button — shown when there are pending offline actions */}
+          {pendingCount > 0 && onSync && (
+            <button
+              onClick={onSync}
+              disabled={isLoading || !isOnline}
+              className="relative p-2 hover:bg-white/10 rounded-full transition-colors disabled:opacity-50"
+              title={`ซิงค์ข้อมูล ${pendingCount} รายการ`}
+            >
+              <RefreshCw size={20} className={isOnline ? 'text-yellow-300' : 'text-white/40'} />
+              <span className="absolute -top-0.5 -right-0.5 bg-yellow-400 text-yellow-900 text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 leading-none">
+                {pendingCount}
+              </span>
+            </button>
+          )}
           
           {onLogout && (
             <button 
