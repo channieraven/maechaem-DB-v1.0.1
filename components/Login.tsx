@@ -31,7 +31,7 @@ export const Login: React.FC<LoginProps> = ({ onBack, setShowRegister }) => {
   }
 
   return (
-    <div className="flex items-center justify-center h-screen bg-gray-50 relative">
+    <div className="flex items-center justify-center min-h-screen bg-gray-50 relative py-8">
       {onBack && (
         <button 
           onClick={onBack}
@@ -41,7 +41,7 @@ export const Login: React.FC<LoginProps> = ({ onBack, setShowRegister }) => {
           <span>กลับหน้าหลัก</span>
         </button>
       )}
-      <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center space-y-6">
+      <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full mx-4 text-center space-y-6">
         <div className="space-y-2">
           <h1 className="text-2xl font-bold text-gray-900">ระบบบันทึกข้อมูลรายแปลง</h1>
           <p className="text-sm font-medium text-gray-600">สำนักวิจัยและพัฒนาการป่าไม้</p>

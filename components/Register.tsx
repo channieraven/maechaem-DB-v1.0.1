@@ -47,11 +47,11 @@ export const Register: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   };
 
   return (
-    <div className="flex items-center justify-center h-screen bg-gray-50 relative">
+    <div className="flex items-center justify-center min-h-screen bg-gray-50 relative py-8">
       {onBack && (
         <button onClick={onBack} className="absolute top-6 left-6 text-gray-500 hover:text-gray-900">กลับหน้าหลัก</button>
       )}
-      <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center space-y-6">
+      <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full mx-4 text-center space-y-6">
         <h1 className="text-2xl font-bold text-gray-900">สมัครสมาชิก</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <input name="fullname" type="text" placeholder="ชื่อ-สกุล" value={form.fullname} onChange={handleChange} required className="w-full px-4 py-2 border rounded-lg" />
