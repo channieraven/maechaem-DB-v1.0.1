@@ -532,7 +532,7 @@ const CoordinateView: React.FC<CoordinateViewProps> = ({
               <th className="px-4 py-3 whitespace-nowrap">UTM Y</th>
               <th className="px-4 py-3 whitespace-nowrap">Lat / Lng</th>
               <th className="px-4 py-3 whitespace-nowrap">สถานะ</th>
-              <th className="px-4 py-3 text-right whitespace-nowrap">จัดการ</th>
+              <th className="px-4 py-3 text-right whitespace-nowrap sticky right-0 bg-gray-800 z-10 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.2)]">จัดการ</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -574,7 +574,7 @@ const CoordinateView: React.FC<CoordinateViewProps> = ({
                         {isValidCoord && isDerived ? '⚡ ' : ''}{statusLabel}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right flex items-center justify-end gap-2">
+                    <td className="px-4 py-3 text-right flex items-center justify-end gap-2 sticky right-0 z-[1] bg-white shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.08)] hover:bg-gray-50">
                       {isValidCoord && (
                         <a 
                           href={`https://www.google.com/maps?q=${lat},${lng}`} 
