@@ -2,7 +2,7 @@
   "name": "ระบบบันทึกข้อมูลรายแปลง — แม่แจ่ม",
   "short_name": "แม่แจ่ม DB",
   "description": "ระบบบันทึกข้อมูลการเติบโตของต้นไม้ โครงการปลูกป่าอเนกประสงค์ แม่แจ่ม",
-  "start_url": "/",
+  "start_url": ".",
   "display": "standalone",
   "background_color": "#f9fafb",
   "theme_color": "#2d5a27",
@@ -10,13 +10,13 @@
   "categories": ["productivity", "utilities"],
   "icons": [
     {
-      "src": "/icons/icon.svg",
+      "src": "./icons/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon.svg",
+      "src": "./icons/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "maskable"
