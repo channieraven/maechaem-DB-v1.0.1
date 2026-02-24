@@ -163,10 +163,7 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick }) => {
               </div>
               <div className="space-y-4 text-sm text-gray-600">
                 <p>
-                  <strong className="text-gray-900">โปรไฟล์ Google (อีเมลและชื่อ):</strong> ใช้เพื่อสร้างโปรไฟล์ผู้ใช้และระบุตัวตนของคุณในระบบ
-                </p>
-                <p>
-                  <strong className="text-gray-900">รูปโปรไฟล์:</strong> แสดงในส่วนหัวของแอปพลิเคชันเพื่อระบุผู้ใช้ที่เข้าสู่ระบบในปัจจุบัน
+                  <strong className="text-gray-900">อีเมลและชื่อ:</strong> ใช้เพื่อสร้างโปรไฟล์ผู้ใช้และระบุตัวตนของคุณในระบบ
                 </p>
               </div>
             </div>
