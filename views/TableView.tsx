@@ -895,7 +895,7 @@ const TableView: React.FC<TableViewProps> = ({
 
               <th className="px-4 py-3 text-center whitespace-nowrap">ดอก/ผล</th>
               <th className="px-4 py-3 whitespace-nowrap">หมายเหตุ</th>
-              <th className="px-4 py-3 text-center bg-gray-900 whitespace-nowrap">จัดการ</th>
+              <th className="px-4 py-3 text-center bg-gray-900 whitespace-nowrap sticky right-0 z-10 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.2)]">จัดการ</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -967,7 +967,7 @@ const TableView: React.FC<TableViewProps> = ({
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-500 truncate max-w-[150px]" title={r.note}>{r.note}</td>
                     
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-3 text-center sticky right-0 z-[1] bg-white shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.08)] group-hover:bg-green-50/50">
                       <div className="flex items-center justify-center gap-2">
                         <button 
                           onClick={() => onEdit(r)}
