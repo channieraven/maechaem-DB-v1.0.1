@@ -66,7 +66,7 @@ const App: React.FC = () => {
     flowering: null,
     note: '',
     recorder: '',
-    surveyDate: new Date().toISOString().split('T')[0],
+    surveyDate: new Date().toLocaleDateString('sv'),
     
     // New Fields
     bambooCulms: '',
@@ -120,13 +120,19 @@ const App: React.FC = () => {
       // Fetch Growth Logs
       const growthRes = await apiGet('growth_logs');
       if (growthRes.success) {
-        setRecords(growthRes.data);
+        setRecords(growthRes.data.map((r: any) => ({
+          ...r,
+          survey_date: r.survey_date ? String(r.survey_date).split('T')[0] : ''
+        })));
       }
 
       // Fetch Supplementary Growth Logs
       const suppRes = await apiGet('growth_logs_supp');
       if (suppRes.success && Array.isArray(suppRes.data)) {
-        setSupplementaryRecords(suppRes.data);
+        setSupplementaryRecords(suppRes.data.map((r: any) => ({
+          ...r,
+          survey_date: r.survey_date ? String(r.survey_date).split('T')[0] : ''
+        })));
       }
       
       setLoadingMessage('กำลังโหลดข้อมูลพิกัด...');
@@ -299,7 +305,7 @@ const App: React.FC = () => {
         flowering: null,
         note: '',
         recorder: user?.fullName || user?.name || '',
-        surveyDate: new Date().toISOString().split('T')[0],
+        surveyDate: new Date().toLocaleDateString('sv'),
         bambooCulms: '',
         dbh1Cm: '',
         dbh2Cm: '',
@@ -327,7 +333,7 @@ const App: React.FC = () => {
         flowering: record.flowering || null,
         note: record.note || '',
         recorder: record.recorder || '',
-        surveyDate: record.survey_date || new Date().toISOString().split('T')[0],
+        surveyDate: record.survey_date ? String(record.survey_date).split('T')[0] : new Date().toLocaleDateString('sv'),
         
         // Map new fields
         bambooCulms: record.bamboo_culms ? record.bamboo_culms.toString() : '',
@@ -362,7 +368,7 @@ const App: React.FC = () => {
         flowering: null,
         note: '',
         recorder: user?.fullName || user?.name || '',
-        surveyDate: new Date().toISOString().split('T')[0],
+        surveyDate: new Date().toLocaleDateString('sv'),
         bambooCulms: '',
         dbh1Cm: '',
         dbh2Cm: '',
@@ -895,7 +901,7 @@ const App: React.FC = () => {
             status: null,
             note: 'Auto-created from Coordinate Sync',
             recorder: 'System',
-            survey_date: new Date().toISOString().split('T')[0]
+            survey_date: new Date().toLocaleDateString('sv')
           };
 
           const res = await apiPost(newRecordPayload);
@@ -935,7 +941,7 @@ const App: React.FC = () => {
           status: null,
           note: 'New tree from coordinate',
           recorder: user?.fullName || user?.name || '',
-          surveyDate: new Date().toISOString().split('T')[0]
+          surveyDate: new Date().toLocaleDateString('sv')
         }));
         setEditLogId(null);
         setShowMobileForm(true);
@@ -1212,7 +1218,7 @@ const App: React.FC = () => {
                        status: null, // 'รอสำรวจ' effectively
                        note: 'Auto-created from Coordinate Import',
                        recorder: 'System',
-                       survey_date: new Date().toISOString().split('T')[0]
+                       survey_date: new Date().toLocaleDateString('sv')
                      };
 
                      const res = await apiPost(newRecordPayload);
