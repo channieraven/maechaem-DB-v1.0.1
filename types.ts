@@ -106,6 +106,7 @@ export interface PlotImage {
   uploader?: string;
   date?: string;
   upload_timestamp?: string; // exact server-side timestamp when the file was uploaded
+  pending?: boolean; // true when queued for offline upload, not yet synced to cloud
 }
 
 export type ViewType = 'table' | 'coords' | 'map' | 'stats' | 'history' | 'plotInfo' | 'profile';

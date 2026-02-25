@@ -4,6 +4,8 @@ import { SPECIES_LIST, PLOT_LIST } from './constants';
 import { apiGet, apiPost } from './services/sheetsService';
 import { utmToLatLng } from './utils/geo';
 import { getPendingActions, addPendingAction, removePendingAction, getPendingCount } from './utils/offlineQueue';
+import { getPendingImageUploads, removePendingImageUpload, getPendingImageCount } from './utils/offlineImageQueue';
+import { uploadBase64ToCloudinary } from './services/cloudinaryService';
 import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext';
 import { Login } from './components/Login';
@@ -101,6 +103,7 @@ const App: React.FC = () => {
   // Online / Offline State
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pendingCount, setPendingCount] = useState(getPendingCount());
+  const [pendingImageCount, setPendingImageCount] = useState(getPendingImageCount());
 
   // --- ACTIONS ---
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -188,7 +191,8 @@ const App: React.FC = () => {
   // --- SYNC PENDING ACTIONS ---
   const handleSync = async () => {
     const pending = getPendingActions();
-    if (pending.length === 0) {
+    const pendingImages = getPendingImageUploads();
+    if (pending.length === 0 && pendingImages.length === 0) {
       showToast('ไม่มีข้อมูลที่รอการซิงค์', 'info');
       return;
     }
@@ -199,6 +203,8 @@ const App: React.FC = () => {
     setIsLoading(true);
     let successCount = 0;
     let errorCount = 0;
+
+    // Sync regular data actions
     for (let i = 0; i < pending.length; i++) {
       const action = pending[i];
       setLoadingMessage(`กำลังซิงค์ข้อมูล (${i + 1}/${pending.length})...`);
@@ -215,12 +221,55 @@ const App: React.FC = () => {
       }
     }
     setPendingCount(getPendingCount());
+
+    // Sync pending image uploads
+    let imageSuccessCount = 0;
+    let imageErrorCount = 0;
+    for (let i = 0; i < pendingImages.length; i++) {
+      const img = pendingImages[i];
+      setLoadingMessage(`กำลังอัปโหลดรูปภาพ (${i + 1}/${pendingImages.length})...`);
+      try {
+        const url = await uploadBase64ToCloudinary(img.base64Data);
+        const payload = {
+          action: 'uploadImage',
+          plot_code: img.plotCode,
+          image_type: img.type,
+          gallery_category: img.galleryCategory || '',
+          url,
+          description: img.description,
+          uploader: img.uploader,
+          date: img.date,
+        };
+        const res = await apiPost(payload);
+        if (res.success) {
+          removePendingImageUpload(img.id);
+          imageSuccessCount++;
+          successCount++;
+        } else {
+          imageErrorCount++;
+          errorCount++;
+        }
+      } catch {
+        imageErrorCount++;
+        errorCount++;
+      }
+    }
+    setPendingImageCount(getPendingImageCount());
+
     const msg = `ซิงค์สำเร็จ ${successCount} รายการ${errorCount > 0 ? ` (ผิดพลาด ${errorCount} รายการ)` : ''}`;
     showToast(msg, errorCount > 0 ? 'info' : 'success');
     if (successCount > 0) fetchData();
     setIsLoading(false);
     setLoadingMessage('');
   };
+
+  // Auto-sync pending data/images when the device comes back online
+  useEffect(() => {
+    if (isOnline && (getPendingCount() > 0 || getPendingImageCount() > 0)) {
+      handleSync();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline]);
 
   const treeCodePreview = useMemo(() => {
     const { plotCode, speciesCode, treeNumber } = formData;
@@ -671,6 +720,14 @@ const App: React.FC = () => {
   };
 
   const handleImageUpload = async (imgData: PlotImage) => {
+    // If the image was queued for offline upload, just update the pending count
+    // and show a toast. The actual upload will happen during sync.
+    if (imgData.pending) {
+      setPendingImageCount(getPendingImageCount());
+      showToast('บันทึกรูปภาพไว้ในเครื่องแล้ว — จะอัปโหลดเมื่อมีสัญญาณ', 'info');
+      return;
+    }
+
     setIsLoading(true);
     setLoadingMessage('กำลังอัปโหลดรูปภาพ...');
     showToast('กำลังบันทึกรูปภาพ...', 'info');
@@ -998,7 +1055,7 @@ const App: React.FC = () => {
         user={user}
         onLogout={logout}
         isOnline={isOnline}
-        pendingCount={pendingCount}
+        pendingCount={pendingCount + pendingImageCount}
         onSync={handleSync}
       />
 
@@ -1082,6 +1139,7 @@ const App: React.FC = () => {
                  setMapPlot(plotCode);
                  setActiveView('map');
               }}
+              isOnline={isOnline}
             />
           )}
 
