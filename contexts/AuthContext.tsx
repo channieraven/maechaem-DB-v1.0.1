@@ -27,7 +27,7 @@ const USER_STORAGE_KEY = 'auth_user';
 // Use GAS as the sole backend — no cookie/session, no /api/auth/* endpoints.
 const APPS_SCRIPT_URL =
   (import.meta.env.VITE_APPS_SCRIPT_URL as string | undefined)?.replace(/\/$/, '') ||
-  'https://script.google.com/macros/s/AKfycbxvQiO4pQ-zk9rOBn_kSGPjhYOnuscerta-pjbJXj1UDaCoMGtRg9nUnVZvwP6seisZ/exec';
+  'https://script.google.com/macros/s/AKfycbx2BK0PKKPvGwIUPNwQvcMUCibdN0QSRQHKF65deQpD5TBo6NCmx8BVCwn0bwIbmFdV/exec';
 
 // Post a JSON payload to GAS using text/plain to avoid CORS preflight.
 async function gasPost(payload: object): Promise<any> {
