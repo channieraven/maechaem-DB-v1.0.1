@@ -9,7 +9,9 @@ import {
   CheckCircle2, 
   ArrowRight,
   Database,
-  Smartphone
+  Smartphone,
+  Share,
+  X
 } from 'lucide-react';
 
 interface HomePageProps {
@@ -25,6 +27,19 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick }) => {
   const { login, isLoading } = useAuth();
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showInstallButton, setShowInstallButton] = useState(false);
+  const [showIOSBanner, setShowIOSBanner] = useState(false);
+
+  // Detect iOS Safari — computed once; these values never change during the component lifecycle
+  const isIOS = React.useMemo(
+    () => /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream,
+    []
+  );
+  const isInStandaloneMode = React.useMemo(
+    () =>
+      (window.navigator as any).standalone === true ||
+      window.matchMedia('(display-mode: standalone)').matches,
+    []
+  );
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -35,11 +50,31 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick }) => {
     const installedHandler = () => setShowInstallButton(false);
     window.addEventListener('beforeinstallprompt', handler);
     window.addEventListener('appinstalled', installedHandler);
+
+    // Show iOS install banner when running in Safari on iOS and not yet installed
+    if (isIOS && !isInStandaloneMode) {
+      const dismissed = localStorage.getItem('ios-install-banner-dismissed');
+      if (!dismissed) {
+        setShowIOSBanner(true);
+      }
+    }
+
     return () => {
       window.removeEventListener('beforeinstallprompt', handler);
       window.removeEventListener('appinstalled', installedHandler);
     };
-  }, []);
+  }, [isIOS, isInStandaloneMode]);
+
+  const handleDismissIOSBanner = () => {
+    setShowIOSBanner(false);
+    localStorage.setItem('ios-install-banner-dismissed', '1');
+  };
+
+  // Show the iOS banner and clear any previous dismissal so users can re-read the instructions
+  const handleShowIOSBanner = () => {
+    localStorage.removeItem('ios-install-banner-dismissed');
+    setShowIOSBanner(true);
+  };
 
   const handleInstall = async () => {
     if (!deferredPrompt) return;
@@ -83,6 +118,15 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick }) => {
                 ติดตั้งแอพ
               </button>
             )}
+            {isIOS && !isInStandaloneMode && (
+              <button
+                onClick={handleShowIOSBanner}
+                className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 md:px-4 md:py-2 rounded-full text-xs md:text-sm font-medium transition-all shadow-lg shadow-green-600/20 flex items-center gap-1 md:gap-2 whitespace-nowrap"
+              >
+                <Smartphone size={14} className="w-3 h-3 md:w-4 md:h-4" />
+                ติดตั้งแอพ
+              </button>
+            )}
             <button
               onClick={handleLogin}
               disabled={isLoading}
@@ -94,6 +138,33 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick }) => {
           </div>
         </div>
       </nav>
+
+      {/* iOS Install Banner */}
+      {showIOSBanner && (
+        <div className="w-full bg-green-700 text-white px-4 py-3 flex items-start gap-3 z-40">
+          <div className="flex-shrink-0 mt-0.5">
+            <Smartphone size={20} className="text-green-200" />
+          </div>
+          <div className="flex-1 text-sm leading-relaxed">
+            <p className="font-semibold mb-1">ติดตั้งแอพบน iPhone / iPad</p>
+            <p className="text-green-100 text-xs">
+              แตะ <span className="inline-flex items-center gap-0.5 font-semibold text-white">
+                <Share size={13} className="inline" /> แชร์
+              </span>{' '}
+              ในแถบเมนูของ Safari แล้วเลือก{' '}
+              <span className="font-semibold text-white">"เพิ่มไปที่หน้าจอโฮม"</span>{' '}
+              เพื่อติดตั้งแอพบนหน้าจอของคุณ
+            </p>
+          </div>
+          <button
+            onClick={handleDismissIOSBanner}
+            className="flex-shrink-0 p-1 rounded-full hover:bg-white/20 transition-colors"
+            aria-label="ปิด"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Hero Section */}
       <section className="relative pt-20 pb-32 overflow-hidden">
@@ -130,6 +201,15 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick }) => {
               >
                 <Smartphone size={20} />
                 ติดตั้งแอพบนโทรศัพท์
+              </button>
+            )}
+            {isIOS && !isInStandaloneMode && (
+              <button
+                onClick={handleShowIOSBanner}
+                className="w-full sm:w-auto px-8 py-4 bg-gray-900 hover:bg-gray-800 text-white rounded-xl font-semibold text-lg transition-all flex items-center justify-center gap-2"
+              >
+                <Smartphone size={20} />
+                ติดตั้งแอพบน iPhone / iPad
               </button>
             )}
           </div>
