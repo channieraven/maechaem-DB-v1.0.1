@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useRef } from 'react';
-import { Search, Loader2, Pencil, Trash2, Plus, Sprout, Leaf, Eraser, Upload, FileText, Check, X, Save, Map } from 'lucide-react';
+import { Search, Loader2, Pencil, Trash2, Plus, Sprout, Leaf, Eraser, Upload, FileText, Check, X, Save, Map, MessageCircle } from 'lucide-react';
 import { PLOT_LIST, SPECIES_LIST } from '../constants';
 import { TreeRecord, PlantCategory } from '../types';
 import { getCategoryFromRecord, getCategoryColor, getPlantCategory } from '../utils/classification';
@@ -26,6 +26,8 @@ interface TableViewProps {
   onClearForm: () => void;
   onCleanDuplicates: () => void;
   onNavigateToMap?: (plotCode: string) => void;
+  onComment?: (record: TreeRecord) => void;
+  commentCounts?: Record<string, number>;
   onBulkSubmitGrowthLogs?: (data: Array<{
     tree_code: string; plot_code: string; species_code: string; species_name: string;
     species_group: string; tree_number: string; row_main: string; row_sub: string;
@@ -101,6 +103,8 @@ const TableView: React.FC<TableViewProps> = ({
   onClearForm,
   onCleanDuplicates,
   onNavigateToMap,
+  onComment,
+  commentCounts,
   onBulkSubmitGrowthLogs
 }) => {
   const [activeCategory, setActiveCategory] = useState<PlantCategory>('ไม้ป่า');
@@ -983,6 +987,20 @@ const TableView: React.FC<TableViewProps> = ({
                         >
                           <Trash2 size={14} />
                         </button>
+                        {onComment && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onComment(r); }}
+                            className="p-1.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors relative"
+                            title="ความคิดเห็น"
+                          >
+                            <MessageCircle size={16} />
+                            {commentCounts && r.log_id && commentCounts[r.log_id] > 0 && (
+                              <span className="absolute -top-0.5 -right-0.5 bg-blue-500 text-white text-[8px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center leading-none">
+                                {commentCounts[r.log_id] > 9 ? '9+' : commentCounts[r.log_id]}
+                              </span>
+                            )}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
