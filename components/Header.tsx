@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Trees, Loader2, RotateCcw, ClipboardList, MapPin, Map as MapIcon, BarChart3, History, FileImage, LogOut, User, WifiOff, RefreshCw } from 'lucide-react';
+import { Trees, Loader2, RotateCcw, ClipboardList, MapPin, Map as MapIcon, BarChart3, History, FileImage, LogOut, User, WifiOff, RefreshCw, Bell } from 'lucide-react';
 import { ViewType } from '../types';
 
 interface HeaderProps {
@@ -14,6 +14,8 @@ interface HeaderProps {
   isOnline?: boolean;
   pendingCount?: number;
   onSync?: () => void;
+  notificationCount?: number;
+  onNotification?: () => void;
 }
 
 const TabButton: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string }> = ({ active, onClick, icon, label }) => (
@@ -30,7 +32,7 @@ const TabButton: React.FC<{ active: boolean; onClick: () => void; icon: React.Re
   </button>
 );
 
-const Header: React.FC<HeaderProps> = ({ stats, isLoading, onRefresh, activeView, setActiveView, user, onLogout, isOnline = true, pendingCount = 0, onSync }) => {
+const Header: React.FC<HeaderProps> = ({ stats, isLoading, onRefresh, activeView, setActiveView, user, onLogout, isOnline = true, pendingCount = 0, onSync, notificationCount, onNotification }) => {
   return (
     <header className="bg-[#2d5a27] text-white shadow-lg z-50 relative shrink-0 w-full">
       {/* Offline Banner */}
@@ -105,6 +107,21 @@ const Header: React.FC<HeaderProps> = ({ stats, isLoading, onRefresh, activeView
               </button>
             </>
           )}
+          
+          {user && onNotification && (
+              <button
+                onClick={onNotification}
+                className="relative p-2 hover:bg-white/10 rounded-full transition-colors"
+                title="การแจ้งเตือน"
+              >
+                <Bell size={20} />
+                {notificationCount != null && notificationCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 leading-none">
+                    {notificationCount > 99 ? '99+' : notificationCount}
+                  </span>
+                )}
+              </button>
+            )}
           
           <button 
             onClick={onRefresh}

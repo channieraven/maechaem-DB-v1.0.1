@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { TreeRecord, CoordRecord, ViewType, GrowthFormData, PlotImage } from './types';
+import { TreeRecord, CoordRecord, ViewType, GrowthFormData, PlotImage, Comment, Notification, AppUser } from './types';
 import { SPECIES_LIST, PLOT_LIST } from './constants';
 import { apiGet, apiPost } from './services/sheetsService';
 import { utmToLatLng } from './utils/geo';
@@ -23,6 +23,8 @@ import HistoryView from './views/HistoryView';
 import PlotInfoView from './views/PlotInfoView';
 import ProfileView from './views/ProfileView';
 import HomePage from './views/HomePage';
+import CommentModal from './components/CommentModal';
+import NotificationPanel from './components/NotificationPanel';
 
 // Define treeCodeRegex at the top-level scope so it's accessible everywhere
 const treeCodeRegex = /^(P\d+)([AB]\d{2})(\d+)$/;
@@ -105,6 +107,16 @@ const App: React.FC = () => {
   const [pendingCount, setPendingCount] = useState(getPendingCount());
   const [pendingImageCount, setPendingImageCount] = useState(getPendingImageCount());
 
+  // Comment & Notification State
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [appUsers, setAppUsers] = useState<AppUser[]>([]);
+  const [showCommentModal, setShowCommentModal] = useState(false);
+  const [commentRecord, setCommentRecord] = useState<TreeRecord | null>(null);
+  const [isLoadingComments, setIsLoadingComments] = useState(false);
+  const [showNotificationPanel, setShowNotificationPanel] = useState(false);
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
+
   // --- ACTIONS ---
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = (msg: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -174,6 +186,9 @@ const App: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+    fetchNotifications();
+    fetchCommentCounts();
+    fetchAppUsers();
   }, []);
 
   // --- ONLINE / OFFLINE LISTENERS ---
@@ -321,12 +336,20 @@ const App: React.FC = () => {
 
   // --- HANDLERS ---
   const handleEdit = (record: TreeRecord, dataset: 'plan' | 'supp' = 'plan') => {
+    // Extract row_main/row_sub from tag_label if the record fields are empty
+    const extractRowFromTag = (tag: string): { row_main: string; row_sub: string } => {
+      const match = tag?.match(/^\d+\s+P\w+\s+(\d+)\s+\(([^)]+)\)/);
+      if (match) return { row_main: match[1], row_sub: match[2] };
+      return { row_main: '', row_sub: '' };
+    };
+    const extracted = extractRowFromTag(record.tag_label || '');
+    
     setFormData({
         plotCode: record.plot_code || '',
-        treeNumber: record.tree_number ? record.tree_number.toString() : '',
+        treeNumber: (record.tree_number != null && record.tree_number !== '') ? record.tree_number.toString() : '',
         speciesCode: record.species_code || '',
-        rowMain: record.row_main || '',
-        rowSub: record.row_sub || '',
+        rowMain: record.row_main || extracted.row_main || '',
+        rowSub: record.row_sub || extracted.row_sub || '',
         dbhCm: record.dbh_cm ? record.dbh_cm.toString() : '',
         heightM: record.height_m ? record.height_m.toString() : '',
         status: record.status || null,
@@ -352,6 +375,121 @@ const App: React.FC = () => {
     if (activeView !== 'map') setActiveView('table');
     setShowMobileForm(true);
     showToast(`กำลังแก้ไขข้อมูล: ${record.tree_code}`, 'info');
+  };
+
+  // --- COMMENT & NOTIFICATION HANDLERS ---
+  const fetchNotifications = async () => {
+    if (!user?.email) return;
+    try {
+      const res = await apiGet('notifications');
+      if (res.success && Array.isArray(res.data)) {
+        const userNotifs = res.data
+          .filter((n: any) => n.user_email === user.email)
+          .map((n: any) => ({ ...n, is_read: n.is_read === true || n.is_read === 'TRUE' }));
+        setNotifications(userNotifs);
+      }
+    } catch (err) {
+      console.error('Failed to fetch notifications:', err);
+    }
+  };
+
+  const fetchCommentCounts = async () => {
+    try {
+      const res = await apiGet('comments');
+      if (res.success && Array.isArray(res.data)) {
+        const counts: Record<string, number> = {};
+        res.data.forEach((c: any) => {
+          if (c.log_id) counts[c.log_id] = (counts[c.log_id] || 0) + 1;
+        });
+        setCommentCounts(counts);
+      }
+    } catch (err) {
+      console.error('Failed to fetch comment counts:', err);
+    }
+  };
+
+  const fetchAppUsers = async () => {
+    try {
+      const res = await apiPost({ action: 'getUsers' });
+      if (res.success && Array.isArray(res.data)) {
+        setAppUsers(res.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch users:', err);
+    }
+  };
+
+  const handleOpenComment = async (record: TreeRecord) => {
+    setCommentRecord(record);
+    setShowCommentModal(true);
+    setIsLoadingComments(true);
+    try {
+      const res = await apiGet(`comments&log_id=${record.log_id}`);
+      if (res.success && Array.isArray(res.data)) {
+        setComments(res.data.map((c: any) => ({
+          ...c,
+          mentions: c.mentions ? (typeof c.mentions === 'string' ? JSON.parse(c.mentions || '[]') : c.mentions) : []
+        })));
+      } else {
+        setComments([]);
+      }
+    } catch (err) {
+      setComments([]);
+    } finally {
+      setIsLoadingComments(false);
+    }
+  };
+
+  const handleSubmitComment = async (content: string, mentions: string[]) => {
+    if (!commentRecord || !user) return;
+    const payload = {
+      action: 'addComment',
+      log_id: commentRecord.log_id || '',
+      tree_code: commentRecord.tree_code,
+      plot_code: commentRecord.plot_code,
+      content,
+      author_email: user.email,
+      author_name: user.fullName || user.name,
+      mentions: JSON.stringify(mentions),
+      recorder_email: commentRecord.recorder,
+    };
+    const res = await apiPost(payload);
+    if (res.success) {
+      await handleOpenComment(commentRecord);
+      await fetchNotifications();
+      setCommentCounts(prev => ({
+        ...prev,
+        [commentRecord.log_id || '']: (prev[commentRecord.log_id || ''] || 0) + 1
+      }));
+    } else {
+      throw new Error(res.error || 'Failed to add comment');
+    }
+  };
+
+  const handleMarkNotificationRead = async (id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+    try {
+      await apiPost({ action: 'markNotificationRead', id });
+    } catch (err) {
+      console.error('Failed to mark notification as read:', err);
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    if (user?.email) {
+      try {
+        await apiPost({ action: 'markAllNotificationsRead', user_email: user.email });
+      } catch (err) {
+        console.error('Failed to mark all notifications as read:', err);
+      }
+    }
+  };
+
+  const handleNotificationClick = (notification: Notification) => {
+    setShowNotificationPanel(false);
+    setActiveView('table');
+    showToast(`ดูความคิดเห็นสำหรับ: ${notification.tree_code}`, 'info');
   };
 
   const handleNewSurvey = (record: TreeRecord) => {
@@ -1063,6 +1201,8 @@ const App: React.FC = () => {
         isOnline={isOnline}
         pendingCount={pendingCount + pendingImageCount}
         onSync={handleSync}
+        notificationCount={notifications.filter(n => !n.is_read).length}
+        onNotification={() => setShowNotificationPanel(true)}
       />
 
       <main className="flex-1 flex overflow-hidden mb-[56px] md:mb-0">
@@ -1123,6 +1263,8 @@ const App: React.FC = () => {
               editLogId={editLogId}
               onEdit={(r) => handleEdit(r, activeTableDataset)}
               onDelete={(r) => handleDeleteRequest(r, activeTableDataset)}
+              onComment={handleOpenComment}
+              commentCounts={commentCounts}
               onOpenMobileForm={() => {
                 clearForm();
                 setEditingDataset(activeTableDataset);
@@ -1318,6 +1460,33 @@ const App: React.FC = () => {
       </main>
 
       <MobileNav activeView={activeView} setActiveView={setActiveView} />
+
+      {/* Comment Modal */}
+      {showCommentModal && commentRecord && (
+        <CommentModal
+          logId={commentRecord.log_id || ''}
+          treeCode={commentRecord.tree_code}
+          plotCode={commentRecord.plot_code}
+          comments={comments}
+          users={appUsers}
+          currentUserEmail={user?.email || ''}
+          currentUserName={user?.fullName || user?.name || ''}
+          isLoading={isLoadingComments}
+          onClose={() => { setShowCommentModal(false); setCommentRecord(null); setComments([]); }}
+          onSubmit={handleSubmitComment}
+        />
+      )}
+
+      {/* Notification Panel */}
+      {showNotificationPanel && (
+        <NotificationPanel
+          notifications={notifications}
+          onClose={() => setShowNotificationPanel(false)}
+          onMarkRead={handleMarkNotificationRead}
+          onMarkAllRead={handleMarkAllNotificationsRead}
+          onClickNotification={handleNotificationClick}
+        />
+      )}
 
       {toast && (
         <div className={`fixed bottom-20 md:bottom-8 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 animate-bounce-short ${

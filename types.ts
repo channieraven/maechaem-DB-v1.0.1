@@ -111,3 +111,34 @@ export interface PlotImage {
 
 export type ViewType = 'table' | 'coords' | 'map' | 'stats' | 'history' | 'plotInfo' | 'profile';
 export type PlantCategory = 'ไม้ป่า' | 'ยางพารา' | 'ผลผลิตไผ่' | 'ไม้ผล' | 'กล้วย';
+
+export interface Comment {
+  id: string;
+  log_id: string;
+  tree_code: string;
+  plot_code: string;
+  content: string;
+  author_email: string;
+  author_name: string;
+  created_at: string;
+  mentions: string[]; // array of mentioned user emails
+}
+
+export interface Notification {
+  id: string;
+  user_email: string;
+  comment_id: string;
+  log_id: string;
+  tree_code: string;
+  plot_code: string;
+  message: string;
+  author_name: string;
+  created_at: string;
+  is_read: boolean;
+}
+
+export interface AppUser {
+  email: string;
+  fullname: string;
+  role: string;
+}

@@ -5,13 +5,19 @@ var SHEET_COORD = "trees_profile";
 var SHEET_IMAGES = "plot_images";
 var SHEET_USERS = "users";
 var SHEET_SPACING = "spacing_logs";
+var SHEET_COMMENTS = "comments";
+var SHEET_NOTIFICATIONS = "notifications";
 
 var DEFAULT_ROLE = "pending";
 
 // --- Entry Points ---
 function doGet(e) {
   var sheetName = e && e.parameter ? e.parameter.sheet : null;
+  var logId = e && e.parameter ? e.parameter.log_id : null;
   if (sheetName) {
+    if (sheetName === 'comments' && logId) {
+      return getCommentsByLogId(logId);
+    }
     return getSheetData(sheetName);
   }
   return responseJSON({ status: "ready" });
@@ -69,6 +75,18 @@ function doPost(e) {
 
       case "addSpacingLog":
         return addSpacingLog(payload);
+
+      case "addComment":
+        return addComment(payload);
+
+      case "markNotificationRead":
+        return markNotificationRead(payload);
+
+      case "markAllNotificationsRead":
+        return markAllNotificationsRead(payload);
+
+      case "getUsers":
+        return getUsersList(payload);
 
       default:
         return responseJSON({ success: false, error: "Unknown action: " + action });
@@ -569,4 +587,156 @@ function ensureUsersSheet_(ss) {
   }
 
   return sheet;
+}
+
+// --- Comments ---
+function addComment(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_COMMENTS);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_COMMENTS);
+    sheet.appendRow(["id", "log_id", "tree_code", "plot_code", "content", "author_email", "author_name", "mentions", "created_at"]);
+  }
+
+  var id = "CMT_" + Date.now();
+  var createdAt = new Date().toISOString();
+  sheet.appendRow([id, data.log_id || "", data.tree_code || "", data.plot_code || "", data.content || "", data.author_email || "", data.author_name || "", data.mentions || "[]", createdAt]);
+
+  // Create notifications for mentioned users
+  var mentions = [];
+  try { mentions = JSON.parse(data.mentions || "[]"); } catch(e) {}
+
+  // Also notify the recorder if different from author
+  var notifyEmails = mentions.slice();
+  if (data.recorder_email && data.recorder_email !== data.author_email && notifyEmails.indexOf(data.recorder_email) === -1) {
+    notifyEmails.push(data.recorder_email);
+  }
+
+  notifyEmails.forEach(function(email) {
+    createNotification({
+      user_email: email,
+      comment_id: id,
+      log_id: data.log_id || "",
+      tree_code: data.tree_code || "",
+      plot_code: data.plot_code || "",
+      message: data.author_name + " แสดงความคิดเห็นเกี่ยวกับ " + data.tree_code + ": " + data.content.substring(0, 60) + (data.content.length > 60 ? "..." : ""),
+      author_name: data.author_name || "",
+    });
+  });
+
+  return responseJSON({ success: true, id: id });
+}
+
+function getCommentsByLogId(logId) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_COMMENTS);
+  if (!sheet) return responseJSON({ success: true, data: [] });
+
+  var values = sheet.getDataRange().getValues();
+  if (values.length <= 1) return responseJSON({ success: true, data: [] });
+
+  var headers = values[0];
+  var logIdIdx = headers.indexOf("log_id");
+  if (logIdIdx === -1) return responseJSON({ success: true, data: [] });
+
+  var tz = Session.getScriptTimeZone();
+  var result = values.slice(1)
+    .filter(function(row) { return String(row[logIdIdx]) === String(logId); })
+    .map(function(row) {
+      var obj = {};
+      headers.forEach(function(h, i) {
+        var val = row[i];
+        if (val instanceof Date) {
+          obj[h] = Utilities.formatDate(val, tz, "yyyy-MM-dd'T'HH:mm:ss");
+        } else {
+          obj[h] = val;
+        }
+      });
+      return obj;
+    });
+
+  return responseJSON({ success: true, data: result });
+}
+
+function createNotification(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NOTIFICATIONS);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NOTIFICATIONS);
+    sheet.appendRow(["id", "user_email", "comment_id", "log_id", "tree_code", "plot_code", "message", "author_name", "created_at", "is_read"]);
+  }
+  var id = "NTF_" + Date.now();
+  var createdAt = new Date().toISOString();
+  sheet.appendRow([id, data.user_email || "", data.comment_id || "", data.log_id || "", data.tree_code || "", data.plot_code || "", data.message || "", data.author_name || "", createdAt, false]);
+  return id;
+}
+
+function markNotificationRead(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NOTIFICATIONS);
+  if (!sheet) return responseJSON({ success: false, error: "Sheet not found" });
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0];
+  var idIdx = headers.indexOf("id");
+  var isReadIdx = headers.indexOf("is_read");
+  if (idIdx === -1 || isReadIdx === -1) return responseJSON({ success: false, error: "Columns not found" });
+
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][idIdx]) === String(data.id)) {
+      sheet.getRange(i + 1, isReadIdx + 1).setValue(true);
+      return responseJSON({ success: true });
+    }
+  }
+  return responseJSON({ success: false, error: "Notification not found" });
+}
+
+function markAllNotificationsRead(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NOTIFICATIONS);
+  if (!sheet) return responseJSON({ success: true });
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0];
+  var userEmailIdx = headers.indexOf("user_email");
+  var isReadIdx = headers.indexOf("is_read");
+  if (userEmailIdx === -1 || isReadIdx === -1) return responseJSON({ success: true });
+
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][userEmailIdx]) === String(data.user_email)) {
+      sheet.getRange(i + 1, isReadIdx + 1).setValue(true);
+    }
+  }
+  return responseJSON({ success: true });
+}
+
+function getUsersList(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_USERS);
+  if (!sheet) return responseJSON({ success: true, data: [] });
+
+  var values = sheet.getDataRange().getValues();
+  if (values.length <= 1) return responseJSON({ success: true, data: [] });
+
+  var headers = values[0];
+  var emailIdx = headers.indexOf("email");
+  var fullnameIdx = headers.indexOf("fullname");
+  var roleIdx = headers.indexOf("role");
+  var approvedIdx = headers.indexOf("approved");
+
+  var result = values.slice(1)
+    .filter(function(row) {
+      var approved = row[approvedIdx];
+      return approved === true || String(approved).toUpperCase() === "TRUE";
+    })
+    .map(function(row) {
+      return {
+        email: emailIdx !== -1 ? String(row[emailIdx]) : "",
+        fullname: fullnameIdx !== -1 ? String(row[fullnameIdx]) : "",
+        role: roleIdx !== -1 ? String(row[roleIdx]) : ""
+      };
+    })
+    .filter(function(u) { return u.email; });
+
+  return responseJSON({ success: true, data: result });
 }
