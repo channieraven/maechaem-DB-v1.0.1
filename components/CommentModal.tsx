@@ -37,7 +37,7 @@ const CommentModal: React.FC<CommentModalProps> = ({
 
   const filteredUsers = users.filter(u =>
     u.email !== currentUserEmail &&
-    (u.fullname.toLowerCase().includes(mentionSearch.toLowerCase()) ||
+    ((u.fullname?.toLowerCase() || '').includes(mentionSearch.toLowerCase()) ||
      u.email.toLowerCase().includes(mentionSearch.toLowerCase()))
   );
 
@@ -48,7 +48,7 @@ const CommentModal: React.FC<CommentModalProps> = ({
     setCursorPos(pos);
 
     const textBeforeCursor = val.slice(0, pos);
-    const atMatch = textBeforeCursor.match(/@(\w*)$/);
+    const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
     if (atMatch) {
       setMentionSearch(atMatch[1]);
       setShowMentionDropdown(true);
@@ -176,9 +176,9 @@ const CommentModal: React.FC<CommentModalProps> = ({
 
         {/* Input Area */}
         <div className="p-4 border-t border-gray-100 shrink-0 relative" ref={dropdownRef}>
-          {showMentionDropdown && filteredUsers.length > 0 && (
+          {showMentionDropdown && (
             <div className="absolute bottom-full left-4 right-4 mb-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-10 max-h-40 overflow-y-auto">
-              {filteredUsers.map(user => (
+              {filteredUsers.length > 0 ? filteredUsers.map(user => (
                 <button
                   key={user.email}
                   onMouseDown={(e) => { e.preventDefault(); insertMention(user); }}
@@ -192,7 +192,9 @@ const CommentModal: React.FC<CommentModalProps> = ({
                     <p className="text-xs text-gray-400">{user.email}</p>
                   </div>
                 </button>
-              ))}
+              )) : (
+                <div className="px-3 py-2 text-sm text-gray-400">ไม่พบผู้ใช้</div>
+              )}
             </div>
           )}
           <div className="flex gap-2 items-end">
