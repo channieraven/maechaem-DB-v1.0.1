@@ -203,7 +203,7 @@ const TableView: React.FC<TableViewProps> = ({
         throw new Error('รองรับเฉพาะไฟล์ .csv, .txt, .xlsx และ .xls เท่านั้น');
       }
 
-      const today = new Date().toISOString().split('T')[0];
+      const today = new Date().toLocaleDateString('sv');
       const newPending: PendingGrowthRecord[] = rows
         .map((rawRow: Record<string, any>, index: number) => {
           // Normalize keys using colMap
@@ -902,7 +902,7 @@ const TableView: React.FC<TableViewProps> = ({
             {filteredRecords.length > 0 ? (
               filteredRecords.map((r, i) => {
                 return (
-                  <tr key={r.log_id || i} className={`hover:bg-green-50/50 transition-colors group ${editLogId === r.log_id ? 'bg-amber-50' : ''}`}>
+                  <tr key={r.log_id || i} onClick={() => onEdit(r)} className={`hover:bg-green-50/50 transition-colors group cursor-pointer ${editLogId === r.log_id ? 'bg-amber-50' : ''}`}>
                     <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
                        <div>{formatDate(r.survey_date)}</div>
                        <div className="text-[10px] text-gray-400">{r.recorder}</div>
@@ -970,14 +970,14 @@ const TableView: React.FC<TableViewProps> = ({
                     <td className="px-4 py-3 text-center sticky right-0 z-[1] bg-white shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.08)] group-hover:bg-green-50/50">
                       <div className="flex items-center justify-center gap-2">
                         <button 
-                          onClick={() => onEdit(r)}
+                          onClick={(e) => { e.stopPropagation(); onEdit(r); }}
                           className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-all"
                           title="แก้ไข"
                         >
                           <Pencil size={14} />
                         </button>
                         <button 
-                          onClick={() => onDelete(r)}
+                          onClick={(e) => { e.stopPropagation(); onDelete(r); }}
                           className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-all"
                           title="ลบข้อมูล"
                         >

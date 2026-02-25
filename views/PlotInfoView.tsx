@@ -267,7 +267,7 @@ const PlotInfoView: React.FC<PlotInfoViewProps> = ({ savedImages, onUploadImage,
   // Upload State
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadUploader, setUploadUploader] = useState(user?.fullName || user?.name || '');
-  const [uploadDate, setUploadDate] = useState(new Date().toISOString().split('T')[0]);
+  const [uploadDate, setUploadDate] = useState(new Date().toLocaleDateString('sv'));
   const [uploadType, setUploadType] = useState<PlotImage['type']>('gallery');
   const [uploadDescription, setUploadDescription] = useState('');
   const [uploadGalleryCategory, setUploadGalleryCategory] = useState<GalleryCategory>('tree');

@@ -334,10 +334,18 @@ function getSheetData(sheetName) {
   var headers = data[0];
   var rows    = data.slice(1);
 
+  var tz = Session.getScriptTimeZone();
   var result = rows.map(function (row) {
     var obj = {};
     headers.forEach(function (header, i) {
-      obj[header] = row[i];
+      var val = row[i];
+      if (val instanceof Date) {
+        // Format using local timezone so the frontend receives a local datetime string
+        // (no 'Z' suffix), preventing UTC-offset date shift (e.g. Thailand UTC+7)
+        obj[header] = Utilities.formatDate(val, tz, "yyyy-MM-dd'T'HH:mm:ss");
+      } else {
+        obj[header] = val;
+      }
     });
     return obj;
   });

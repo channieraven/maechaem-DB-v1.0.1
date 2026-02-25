@@ -1,5 +1,5 @@
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import { Pencil, Plus, X, Save, Loader2, Leaf } from 'lucide-react';
 import { PLOT_LIST, SPECIES_LIST } from '../constants';
 import { GrowthFormData } from '../types';
@@ -38,9 +38,18 @@ const GrowthForm: React.FC<GrowthFormProps> = ({
   setTreeDataset
 }) => {
   const { user } = useAuth();
+  const containerRef = useRef<HTMLDivElement>(null);
+
   const handleChange = (field: keyof GrowthFormData, value: any) => {
     setFormData({ ...formData, [field]: value });
   };
+
+  // Scroll sidebar to top whenever edit mode activates so the user sees the pre-filled data
+  useEffect(() => {
+    if (editLogId && containerRef.current) {
+      containerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [editLogId]);
 
   // Determine Category based on selected species
   const currentCategory = useMemo(() => {
@@ -49,7 +58,7 @@ const GrowthForm: React.FC<GrowthFormProps> = ({
   }, [formData.speciesCode]);
 
   return (
-    <div className={`
+    <div ref={containerRef} className={`
       bg-white flex flex-col overflow-y-auto shrink-0 shadow-lg border-r border-gray-200 transition-all duration-300 ease-in-out
       /* Mobile: Fixed Modal */
       fixed inset-0 z-[2000] w-full h-full transform
