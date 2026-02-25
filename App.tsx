@@ -111,6 +111,7 @@ const App: React.FC = () => {
   const [comments, setComments] = useState<Comment[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [appUsers, setAppUsers] = useState<AppUser[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [showCommentModal, setShowCommentModal] = useState(false);
   const [commentRecord, setCommentRecord] = useState<TreeRecord | null>(null);
   const [isLoadingComments, setIsLoadingComments] = useState(false);
@@ -346,9 +347,12 @@ const App: React.FC = () => {
     
     setFormData({
         plotCode: record.plot_code || '',
-        treeNumber: record.tree_number
-          ? record.tree_number.toString()
-          : (record.tree_code ? String(parseInt(record.tree_code.slice(-3), 10)) : ''),
+        treeNumber: (() => {
+          const num = parseInt(String(record.tree_number), 10);
+          if (!isNaN(num) && num > 0) return String(num);
+          const m = treeCodeRegex.exec(record.tree_code || '');
+          return m ? String(parseInt(m[3], 10)) : '';
+        })(),
         speciesCode: record.species_code || '',
         rowMain: record.row_main || extracted.row_main || '',
         rowSub: record.row_sub || extracted.row_sub || '',
@@ -411,6 +415,7 @@ const App: React.FC = () => {
   };
 
   const fetchAppUsers = async () => {
+    setIsLoadingUsers(true);
     try {
       const res = await apiPost({ action: 'getUsers' });
       if (res.success && Array.isArray(res.data)) {
@@ -418,6 +423,8 @@ const App: React.FC = () => {
       }
     } catch (err) {
       console.error('Failed to fetch users:', err);
+    } finally {
+      setIsLoadingUsers(false);
     }
   };
 
@@ -425,7 +432,7 @@ const App: React.FC = () => {
     setCommentRecord(record);
     setShowCommentModal(true);
     setIsLoadingComments(true);
-    fetchAppUsers();
+    fetchAppUsers(); // fire concurrently — state update will re-render modal when done
     try {
       const res = await apiGet(`comments&log_id=${record.log_id}`);
       if (res.success && Array.isArray(res.data)) {
@@ -498,7 +505,12 @@ const App: React.FC = () => {
   const handleNewSurvey = (record: TreeRecord) => {
     setFormData({
         plotCode: record.plot_code || '',
-        treeNumber: record.tree_number ? record.tree_number.toString() : '',
+        treeNumber: (() => {
+          const num = parseInt(String(record.tree_number), 10);
+          if (!isNaN(num) && num > 0) return String(num);
+          const m = treeCodeRegex.exec(record.tree_code || '');
+          return m ? String(parseInt(m[3], 10)) : '';
+        })(),
         speciesCode: record.species_code || '',
         rowMain: record.row_main || '',
         rowSub: record.row_sub || '',
@@ -1472,6 +1484,7 @@ const App: React.FC = () => {
           plotCode={commentRecord.plot_code}
           comments={comments}
           users={appUsers}
+          isLoadingUsers={isLoadingUsers}
           currentUserEmail={user?.email || ''}
           currentUserName={user?.fullName || user?.name || ''}
           isLoading={isLoadingComments}

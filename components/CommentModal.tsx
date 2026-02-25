@@ -8,6 +8,7 @@ interface CommentModalProps {
   plotCode: string;
   comments: Comment[];
   users: AppUser[];
+  isLoadingUsers?: boolean;
   currentUserEmail: string;
   currentUserName: string;
   isLoading: boolean;
@@ -21,6 +22,7 @@ const CommentModal: React.FC<CommentModalProps> = ({
   plotCode,
   comments,
   users,
+  isLoadingUsers = false,
   currentUserEmail,
   currentUserName,
   isLoading,
@@ -178,7 +180,11 @@ const CommentModal: React.FC<CommentModalProps> = ({
         <div className="p-4 border-t border-gray-100 shrink-0 relative" ref={dropdownRef}>
           {showMentionDropdown && (
             <div className="absolute bottom-full left-4 right-4 mb-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-10 max-h-40 overflow-y-auto">
-              {filteredUsers.length > 0 ? filteredUsers.map(user => (
+              {isLoadingUsers ? (
+                <div className="px-3 py-2 text-sm text-gray-400 flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" /> กำลังโหลดรายชื่อผู้ใช้...
+                </div>
+              ) : filteredUsers.length > 0 ? filteredUsers.map(user => (
                 <button
                   key={user.email}
                   onMouseDown={(e) => { e.preventDefault(); insertMention(user); }}
