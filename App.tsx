@@ -346,7 +346,9 @@ const App: React.FC = () => {
     
     setFormData({
         plotCode: record.plot_code || '',
-        treeNumber: (record.tree_number != null && record.tree_number !== '') ? record.tree_number.toString() : '',
+        treeNumber: record.tree_number
+          ? record.tree_number.toString()
+          : (record.tree_code ? String(parseInt(record.tree_code.slice(-3), 10)) : ''),
         speciesCode: record.species_code || '',
         rowMain: record.row_main || extracted.row_main || '',
         rowSub: record.row_sub || extracted.row_sub || '',
@@ -423,6 +425,7 @@ const App: React.FC = () => {
     setCommentRecord(record);
     setShowCommentModal(true);
     setIsLoadingComments(true);
+    fetchAppUsers();
     try {
       const res = await apiGet(`comments&log_id=${record.log_id}`);
       if (res.success && Array.isArray(res.data)) {
